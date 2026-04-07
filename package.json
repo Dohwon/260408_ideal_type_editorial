@@ -1,0 +1,10 @@
+{
+  "name": "260408_ideal_type_editorial",
+  "private": true,
+  "type": "module",
+  "description": "Editorial ideal type analyzer with curated demo mode and optional OpenAI-powered custom analysis.",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  }
+}
