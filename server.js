@@ -15,6 +15,8 @@ const publicDir = path.join(__dirname, "public");
 const port = Number(process.env.PORT || 3000);
 const model = process.env.OPENAI_MODEL || "gpt-5-mini";
 const imageModel = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5";
+const naverClientId = process.env.NAVER_SEARCH_CLIENT_ID || "";
+const naverClientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET || "";
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -101,6 +103,120 @@ function hasOnlyCuratedNames(names) {
 function summarizeTopTags(category, tagIds) {
   const meta = getTagMeta(category);
   return tagIds.map((tagId) => meta[tagId]?.label || tagId).filter(Boolean);
+}
+
+function stripHtmlTags(value) {
+  return String(value || "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .trim();
+}
+
+function buildLocalSearchResults(query, category) {
+  const keyword = query.trim().toLowerCase();
+  if (!keyword) {
+    return [];
+  }
+
+  return curatedPeople
+    .filter((person) => {
+      const pool = [
+        person.name,
+        person.role,
+        person.note,
+        ...(category === "appearance" ? person.appearanceTags : person.personalityTags),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return pool.includes(keyword);
+    })
+    .slice(0, 12)
+    .map((person) => ({
+      id: `local:${person.name}`,
+      name: person.name,
+      selectionName: person.name,
+      role: person.role,
+      note: person.note,
+      imageUrl: "",
+      source: "local",
+    }));
+}
+
+async function buildNaverSearchPreview(query) {
+  if (!naverClientId || !naverClientSecret) {
+    return [];
+  }
+
+  const encodedQuery = encodeURIComponent(`${query} 연예인 프로필`);
+  const url = `https://openapi.naver.com/v1/search/image?query=${encodedQuery}&display=8&start=1&sort=sim&filter=medium`;
+  const response = await fetch(url, {
+    headers: {
+      "X-Naver-Client-Id": naverClientId,
+      "X-Naver-Client-Secret": naverClientSecret,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error("네이버 이미지 검색 요청이 실패했습니다.");
+  }
+
+  const payload = await response.json();
+  const first = payload?.items?.[0];
+  if (!first) {
+    return [];
+  }
+
+  return [
+    {
+      id: `naver:${query}`,
+      name: query,
+      selectionName: query,
+      role: "네이버 이미지 검색",
+      note: stripHtmlTags(first.title) || `${query} 관련 이미지 검색 결과`,
+      imageUrl: first.thumbnail || first.link || "",
+      source: "naver",
+    },
+  ];
+}
+
+async function searchPeople(payload) {
+  const query = String(payload?.query || "").trim();
+  const category = payload?.category === "personality" ? "personality" : "appearance";
+  if (!query) {
+    return {
+      provider: "none",
+      results: [],
+    };
+  }
+
+  const localResults = buildLocalSearchResults(query, category);
+  let externalResults = [];
+
+  try {
+    externalResults = await buildNaverSearchPreview(query);
+  } catch {
+    externalResults = [];
+  }
+
+  const merged = [];
+  const seen = new Set();
+  for (const item of [...externalResults, ...localResults]) {
+    const key = normalizeName(item.selectionName || item.name);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(item);
+  }
+
+  return {
+    provider: externalResults.length > 0 ? "naver" : "local",
+    results: merged.slice(0, 12),
+  };
 }
 
 function topTagsForCategory(category, people) {
@@ -231,16 +347,16 @@ function buildLocalAnalysis({ category, names }) {
   const breakdown = buildLocalBreakdown(category, names, topTagIds);
   const shortReply =
     category === "appearance"
-      ? `분위기 있고 선이 또렷한 스타일이 좋아. 너무 가볍거나 반짝이는 느낌보다 차분하고 어른스러운 쪽.`
-      : `재밌는데 가볍지 않고, 다정한데 자기 일 잘하는 사람이 좋아.`;
+      ? `분위기 있고 선이 또렷한 스타일이 좋아.`
+      : `재밌는데 가볍지 않은 사람이 좋아.`;
   const naturalReply =
     category === "appearance"
-      ? `외적으로는 눈빛이 있고 분위기 있는 스타일이 좋아. 화려하게 예쁜 얼굴보다는 선이 살아 있고 차분한 무드가 있는 쪽.`
-      : `성격은 재밌고 센스 있는데 기본적으로 따뜻한 사람이 좋아. 장난은 쳐도 사람 자체는 가볍지 않은 타입.`;
+      ? `나는 화려하게 예쁜 얼굴보다 눈빛이 있고 선이 살아 있는, 차분한 분위기의 스타일이 좋더라.`
+      : `나는 재밌고 센스는 있는데 사람 자체는 가볍지 않고, 기본적으로 따뜻한 사람이 좋더라.`;
   const deepReply =
     category === "appearance"
-      ? `나는 약간 차분하고 분위기 있는 얼굴에 더 끌리더라. 또렷한 선, 깊은 눈빛, 길고 시원한 실루엣처럼 무드가 먼저 보이는 스타일이 좋아.`
-      : `나는 말은 재밌게 하는데 사람 자체는 무게감 있는 사람이 좋더라. 센스 있고 다정한데, 결국 자기 일은 진심으로 잘하는 사람 쪽.`;
+      ? `나는 정답처럼 반듯하게 예쁜 얼굴보다, 선이 또렷하고 눈빛에 분위기가 있는 쪽에 더 끌리더라. 전체적으로 차분하고 어른스러운 무드가 느껴지는 스타일이 좋다는 쪽에 가깝다.`
+      : `나는 말은 재밌게 해도 사람 자체는 가볍지 않은 타입이 좋더라. 센스 있고 다정해서 같이 있으면 편한데, 자기 일에는 진심이고 믿음이 가는 사람이 더 끌린다.`;
 
   return {
     source: "local",
@@ -272,10 +388,10 @@ function buildLocalSynthesis({ appearanceResult, personalityResult }) {
     headline: "차분하고 존재감 있는 외형에, 유쾌하고 다정한 성격이 더해진 타입",
     keywords: keywords.slice(0, 4),
     summary: `겉으로는 ${appearanceResult.title} 쪽에 끌리고, 관계 안에서는 ${personalityResult.title} 쪽에 더 반응하는 패턴입니다. 즉, 첫인상은 차분하고 묵직한데 가까워질수록 웃기고 따뜻한 사람이 당신의 최종 이상형에 가깝습니다.`,
-    combined_reply: `나는 분위기 있고 선이 또렷한 스타일을 좋아하는데, 성격은 재밌고 다정하면서 자기 일 잘하는 사람이 좋더라.`,
-    short_reply: `분위기 있고 차분한데, 말하면 유쾌하고 따뜻한 사람이 좋아.`,
-    natural_reply: `외적으로는 눈빛 있고 분위기 있는 스타일을 좋아하고, 성격은 센스 있고 다정한데 자기 일도 잘하는 사람이 좋아.`,
-    deep_reply: `나는 약간 어른스럽고 존재감 있는 스타일인데, 막상 가까워지면 재밌고 편안한 사람이 좋더라. 너무 가볍지 않고, 기본적으로 온기와 실력이 같이 느껴지는 타입.`,
+    combined_reply: `나는 차분하고 분위기 있는 스타일인데, 막상 말해보면 유쾌하고 다정한 사람이 좋더라.`,
+    short_reply: `차분한 분위기에 유쾌한 온기가 있는 사람이 좋아.`,
+    natural_reply: `나는 외적으로는 분위기 있고 차분한 스타일을 좋아하고, 성격은 유쾌하고 다정한데 자기 일도 잘하는 사람이 좋더라.`,
+    deep_reply: `나는 첫인상은 차분하고 존재감 있는 스타일인데, 가까워질수록 재밌고 따뜻한 사람이 좋더라. 너무 가볍기만 한 사람보다 유머는 있어도 기본적으로 믿음이 가고, 자기 일도 잘하는 타입에 더 끌린다.`,
     confidence_note: "외적 분석과 성격 분석 결과를 합쳐 정리한 로컬 종합본입니다.",
   };
 }
@@ -333,6 +449,10 @@ async function buildOpenAIAnalysis({ category, names }) {
     '  "deep_reply": string,',
     '  "confidence_note": string',
     "}",
+    "Make the three reply fields clearly different in length and density.",
+    'short_reply: one short summary sentence, around 18-35 Korean characters when possible.',
+    "natural_reply: the primary answer for conversation, 1-2 natural spoken sentences.",
+    "deep_reply: longer than natural_reply, 2-3 sentences with more nuance or explanation.",
   ].join("\n");
 
   const input = [
@@ -344,6 +464,9 @@ async function buildOpenAIAnalysis({ category, names }) {
     "- personality이면 인터뷰 톤, 방송/작품에서 반복되는 이미지, 대중적 인상 중심으로 본다.",
     "- 결과는 너무 길지 않게, 하지만 충분히 설득력 있게 정리한다.",
     "- breakdown 각 항목은 2문장 이내로 압축한다.",
+    "- short_reply, natural_reply, deep_reply는 서로 거의 같은 문장이 되면 안 된다.",
+    "- natural_reply는 사용자가 실제로 가장 자주 복사해 말할 문장처럼 자연스러워야 한다.",
+    "- deep_reply는 short_reply의 단순 확장이 아니라 취향의 결을 한 번 더 풀어 설명해야 한다.",
   ].join("\n");
 
   const responseJson = await callOpenAI({
@@ -388,6 +511,11 @@ async function buildOpenAISynthesis({ appearanceResult, personalityResult }) {
     '  "deep_reply": string,',
     '  "confidence_note": string',
     "}",
+    "Make the replies clearly different in purpose.",
+    "combined_reply: best natural spoken final answer.",
+    'short_reply: one short summary sentence, around 18-35 Korean characters when possible.',
+    "natural_reply: 1-2 natural spoken sentences, clearly fuller than short_reply.",
+    "deep_reply: 2-3 sentences, clearly fuller than natural_reply, with nuance and rationale.",
   ].join("\n");
 
   const input = JSON.stringify(
@@ -588,6 +716,7 @@ const server = createServer(async (request, response) => {
         hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
         model,
         imageModel,
+        hasNaverSearch: Boolean(naverClientId && naverClientSecret),
       });
     }
 
@@ -597,7 +726,17 @@ const server = createServer(async (request, response) => {
         examplePacks,
         supportsCustomAnalysis: Boolean(process.env.OPENAI_API_KEY),
         supportsImageGeneration: Boolean(process.env.OPENAI_API_KEY),
+        supportsNaverSearch: Boolean(naverClientId && naverClientSecret),
       });
+    }
+
+    if (method === "GET" && pathname === "/api/search-people") {
+      const url = new URL(request.url, `http://${request.headers.host}`);
+      const result = await searchPeople({
+        query: url.searchParams.get("query") || "",
+        category: url.searchParams.get("category") || "appearance",
+      });
+      return json(response, 200, result);
     }
 
     if (method === "POST" && pathname === "/api/analyze") {

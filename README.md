@@ -28,6 +28,10 @@ npm start
   - 기본값: `gpt-5-mini`
 - `OPENAI_IMAGE_MODEL`
   - 기본값: `gpt-image-1.5`
+- `NAVER_SEARCH_CLIENT_ID`
+- `NAVER_SEARCH_CLIENT_SECRET`
+  - 둘 다 있으면 검색창에서 네이버 이미지 검색 썸네일 프리뷰 사용
+  - 없으면 로컬 후보 검색만 동작
 
 ## OpenAI 구현 메모
 
@@ -36,6 +40,7 @@ npm start
 - 서버 `fetch` 기반 구현이라 별도 SDK 의존성 없음
 - 최종 포트레이트는 `/v1/images/generations`로 생성
 - 기본 설정: `gpt-image-1.5`, `1024x1536`, `quality=high`, `png`
+- 인물 검색 프리뷰는 네이버 이미지 검색 API를 사용
 
 ## 배포
 

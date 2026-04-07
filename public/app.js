@@ -3,8 +3,10 @@ const state = {
   examplePacks: {},
   supportsCustomAnalysis: false,
   supportsImageGeneration: false,
+  supportsNaverSearch: false,
   currentTab: "appearance",
   search: "",
+  searchResults: [],
   customName: "",
   selections: {
     appearance: [],
@@ -20,6 +22,7 @@ const state = {
     personality: false,
     synthesis: false,
     image: false,
+    search: false,
   },
   portrait: null,
   toast: "",
@@ -119,24 +122,10 @@ function escapeHtml(value) {
 }
 
 function filteredPeople() {
-  const keyword = state.search.trim().toLowerCase();
   const selection = getCurrentSelection();
-  if (!keyword) {
-    return [];
-  }
-  return state.catalog
-    .filter((person) => {
-      const pool = [
-        person.name,
-        person.role,
-        person.note,
-        ...(state.currentTab === "appearance" ? person.appearanceTags : person.personalityTags),
-      ]
-        .join(" ")
-        .toLowerCase();
-      return pool.includes(keyword);
-    })
-    .sort((a, b) => Number(selection.includes(b.name)) - Number(selection.includes(a.name)));
+  return [...state.searchResults].sort(
+    (a, b) => Number(selection.includes(b.selectionName || b.name)) - Number(selection.includes(a.selectionName || a.name))
+  );
 }
 
 function selectionCountText() {
@@ -193,6 +182,42 @@ function togglePerson(name) {
   state.portrait = null;
   saveState();
   render();
+}
+
+async function fetchSearchResults(query) {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    state.searchResults = [];
+    state.loading.search = false;
+    render();
+    return;
+  }
+
+  state.loading.search = true;
+  render();
+  try {
+    const response = await fetch(
+      `/api/search-people?query=${encodeURIComponent(trimmed)}&category=${encodeURIComponent(state.currentTab)}`
+    );
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "검색에 실패했습니다.");
+    }
+    if (state.search.trim() !== trimmed) {
+      return;
+    }
+    state.searchResults = result.results || [];
+  } catch (error) {
+    if (state.search.trim() === trimmed) {
+      state.searchResults = [];
+      setToast(error.message);
+    }
+  } finally {
+    if (state.search.trim() === trimmed) {
+      state.loading.search = false;
+      render();
+    }
+  }
 }
 
 function removeFromCurrent(name) {
@@ -338,6 +363,9 @@ function renderPeopleCards() {
   if (!state.search.trim()) {
     return `<div class="empty-state">이름을 검색하면 후보가 뜹니다. 미리 사람을 펼쳐두지 않고, 검색했을 때만 보여주도록 바꿨습니다.</div>`;
   }
+  if (state.loading.search) {
+    return `<div class="empty-state">검색 결과를 불러오는 중입니다.</div>`;
+  }
   if (people.length === 0) {
     return `<div class="empty-state">검색 결과가 없습니다. 원하는 사람이 없으면 아래 입력칸에서 직접 추가하면 됩니다.</div>`;
   }
@@ -345,17 +373,22 @@ function renderPeopleCards() {
   return `<div class="search-results">
     ${people
       .map((person) => {
-        const active = current.includes(person.name);
-        const tags =
-          state.currentTab === "appearance" ? person.appearanceTags.slice(0, 2) : person.personalityTags.slice(0, 2);
+        const choiceName = person.selectionName || person.name;
+        const active = current.includes(choiceName);
+        const localPerson = state.catalog.find((item) => item.name === choiceName);
+        const tags = localPerson
+          ? (state.currentTab === "appearance" ? localPerson.appearanceTags.slice(0, 2) : localPerson.personalityTags.slice(0, 2))
+          : [];
         return `<div class="search-row-card ${active ? "active" : ""}">
-          <button class="search-row-main" type="button" data-action="toggle" data-name="${escapeHtml(person.name)}">
-            <div class="search-avatar" style="${getPortraitStyle(person.name)}" data-initials="${escapeHtml(
-              initialsFromName(person.name)
-            )}"></div>
+          <button class="search-row-main" type="button" data-action="toggle" data-name="${escapeHtml(choiceName)}">
+            <div class="search-avatar" style="${getPortraitStyle(choiceName)}" data-initials="${escapeHtml(
+              initialsFromName(choiceName)
+            )}">
+              ${person.imageUrl ? `<img src="${escapeHtml(person.imageUrl)}" alt="${escapeHtml(choiceName)}" referrerpolicy="no-referrer" />` : ""}
+            </div>
             <div class="search-copy">
               <div class="search-name-line">
-                <span class="search-name">${escapeHtml(person.name)}</span>
+                <span class="search-name">${escapeHtml(choiceName)}</span>
                 <span class="search-role">${escapeHtml(person.role)}</span>
               </div>
               <div class="search-note">${escapeHtml(person.note)}</div>
@@ -364,7 +397,7 @@ function renderPeopleCards() {
               </div>
             </div>
           </button>
-          <button class="${active ? "secondary-button" : "primary-button"} search-pick-button" type="button" data-action="toggle" data-name="${escapeHtml(person.name)}">
+          <button class="${active ? "secondary-button" : "primary-button"} search-pick-button" type="button" data-action="toggle" data-name="${escapeHtml(choiceName)}">
             ${active ? "선택됨" : "선택"}
           </button>
         </div>`;
@@ -375,15 +408,29 @@ function renderPeopleCards() {
 
 function renderReplies(result, isSynthesis = false) {
   const cards = [
-    { label: "짧게", value: isSynthesis ? result.short_reply : result.short_reply },
-    { label: "자연스럽게", value: isSynthesis ? result.natural_reply : result.natural_reply },
-    { label: "조금 더 풀어서", value: isSynthesis ? result.deep_reply : result.deep_reply },
+    {
+      label: "자연스럽게 말하면",
+      helper: "가장 자주 꺼내 쓰기 좋은 기본 문장",
+      value: result.natural_reply,
+      featured: true,
+    },
+    {
+      label: "한 줄 요약",
+      helper: "짧게 바로 답할 때",
+      value: result.short_reply,
+    },
+    {
+      label: "조금 더 설명하면",
+      helper: isSynthesis ? "취향의 결을 한 번 더 풀어서" : "이 취향이 왜 보이는지까지",
+      value: result.deep_reply,
+    },
   ];
   return `<div class="reply-grid">
     ${cards
       .map(
-        (card) => `<div class="reply-card">
+        (card) => `<div class="reply-card ${card.featured ? "featured" : ""}">
           <h4>${card.label}</h4>
+          <div class="reply-helper">${card.helper}</div>
           <p>${escapeHtml(card.value)}</p>
           <button type="button" data-action="copy" data-copy="${escapeHtml(card.value)}">문장 복사</button>
         </div>`
@@ -441,30 +488,12 @@ function renderSynthesisCard(result) {
     <div class="keyword-row">
       ${(result.keywords || []).map((keyword) => `<span class="keyword">${escapeHtml(keyword)}</span>`).join("")}
     </div>
-    <div class="reply-grid">
-      <div class="reply-card">
-        <h4>최종 한 줄</h4>
-        <p>${escapeHtml(result.combined_reply)}</p>
-        <button type="button" data-action="copy" data-copy="${escapeHtml(result.combined_reply)}">문장 복사</button>
-      </div>
-      <div class="reply-card">
-        <h4>짧게</h4>
-        <p>${escapeHtml(result.short_reply)}</p>
-        <button type="button" data-action="copy" data-copy="${escapeHtml(result.short_reply)}">문장 복사</button>
-      </div>
-      <div class="reply-card">
-        <h4>자연스럽게</h4>
-        <p>${escapeHtml(result.natural_reply)}</p>
-        <button type="button" data-action="copy" data-copy="${escapeHtml(result.natural_reply)}">문장 복사</button>
-      </div>
+    <div class="lead-reply-card">
+      <div class="lead-reply-kicker">대표 문장</div>
+      <p>${escapeHtml(result.combined_reply)}</p>
+      <button type="button" data-action="copy" data-copy="${escapeHtml(result.combined_reply)}">문장 복사</button>
     </div>
-    <div class="reply-grid">
-      <div class="reply-card">
-        <h4>조금 더 풀어서</h4>
-        <p>${escapeHtml(result.deep_reply)}</p>
-        <button type="button" data-action="copy" data-copy="${escapeHtml(result.deep_reply)}">문장 복사</button>
-      </div>
-    </div>
+    ${renderReplies(result, true)}
     <div class="confidence-note">${escapeHtml(result.confidence_note || "")}</div>
     <div class="image-actions">
       <button type="button" class="primary-button" data-action="generate-image" ${state.supportsImageGeneration ? "" : "disabled"}>
@@ -528,7 +557,7 @@ function render() {
             <h1>이름 몇 개만으로 취향을 말하게.</h1>
             <p>
               외적 이상형과 성격 이상형을 따로 고른 뒤, 마지막에 둘을 합쳐 최종 한 줄까지 만들 수 있습니다.
-              결과는 "짧게", "자연스럽게", "조금 더 풀어서" 세 버전으로 바로 복사할 수 있게 정리합니다.
+              결과는 먼저 자연스럽게 말하는 기본 문장으로 보여주고, 그 아래에 한 줄 요약과 조금 더 자세한 설명을 함께 정리합니다.
             </p>
           </div>
           <aside class="hero-side">
@@ -596,6 +625,7 @@ function render() {
               <span class="meta-chip"><strong>Target</strong> 3명 ~ 10명</span>
               <span class="meta-chip"><strong>Current</strong> ${selectionCountText()}</span>
               <span class="meta-chip"><strong>${state.supportsCustomAnalysis ? "AI" : "Demo"}</strong> ${state.supportsCustomAnalysis ? "임의 이름 분석 가능" : "추천 카드 조합 즉시 분석"}</span>
+              <span class="meta-chip"><strong>${state.supportsNaverSearch ? "Naver" : "Local"}</strong> ${state.supportsNaverSearch ? "검색 시 썸네일 프리뷰 사용" : "검색은 로컬 후보 fallback"}</span>
             </div>
 
             <div class="add-row">
@@ -643,7 +673,7 @@ function render() {
             </div>
             <div class="mini-card">
               <h3>사진 소스</h3>
-              <p>지금 버전은 외부 인명사전 사진을 직접 붙이지 않고 있습니다. 검색 API나 별도 이미지 소스를 연결해야 안정적으로 운영할 수 있습니다.</p>
+              <p>${state.supportsNaverSearch ? "현재는 네이버 이미지 검색 API 결과를 검색 프리뷰로 사용합니다. 선택 이름은 그대로 유지하고, 썸네일만 보조적으로 붙입니다." : "현재 서버에는 외부 이미지 검색 키가 없어 로컬 후보만 보여줍니다. 키를 넣으면 검색 썸네일 프리뷰가 바로 켜집니다."}</p>
             </div>
           </aside>
         </section>
@@ -685,6 +715,7 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.currentTab = button.dataset.tab;
       state.search = "";
+      state.searchResults = [];
       state.customName = "";
       saveState();
       render();
@@ -693,6 +724,10 @@ function bindEvents() {
 
   app.querySelector("[data-role='search']")?.addEventListener("input", (event) => {
     state.search = event.target.value;
+    clearTimeout(bindEvents.searchTimer);
+    bindEvents.searchTimer = setTimeout(() => {
+      fetchSearchResults(state.search);
+    }, 220);
     render();
   });
 
@@ -751,6 +786,7 @@ async function init() {
     state.examplePacks = data.examplePacks || {};
     state.supportsCustomAnalysis = Boolean(data.supportsCustomAnalysis);
     state.supportsImageGeneration = Boolean(data.supportsImageGeneration);
+    state.supportsNaverSearch = Boolean(data.supportsNaverSearch);
     render();
   } catch {
     setToast("카탈로그를 불러오지 못했습니다.");
