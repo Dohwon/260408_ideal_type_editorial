@@ -121,11 +121,11 @@ function escapeHtml(value) {
 function filteredPeople() {
   const keyword = state.search.trim().toLowerCase();
   const selection = getCurrentSelection();
+  if (!keyword) {
+    return [];
+  }
   return state.catalog
     .filter((person) => {
-      if (!keyword) {
-        return true;
-      }
       const pool = [
         person.name,
         person.role,
@@ -335,29 +335,39 @@ function renderSelectedChips() {
 
 function renderPeopleCards() {
   const people = filteredPeople();
+  if (!state.search.trim()) {
+    return `<div class="empty-state">이름을 검색하면 후보가 뜹니다. 미리 사람을 펼쳐두지 않고, 검색했을 때만 보여주도록 바꿨습니다.</div>`;
+  }
   if (people.length === 0) {
-    return `<div class="empty-state">검색 결과가 없습니다. 직접 이름을 추가해서 분석할 수도 있습니다.</div>`;
+    return `<div class="empty-state">검색 결과가 없습니다. 원하는 사람이 없으면 아래 입력칸에서 직접 추가하면 됩니다.</div>`;
   }
   const current = getCurrentSelection();
-  return `<div class="cards">
+  return `<div class="search-results">
     ${people
       .map((person) => {
         const active = current.includes(person.name);
         const tags =
           state.currentTab === "appearance" ? person.appearanceTags.slice(0, 2) : person.personalityTags.slice(0, 2);
-        return `<button class="person-card ${active ? "active" : ""}" type="button" data-action="toggle" data-name="${escapeHtml(
-          person.name
-        )}">
-          <div class="portrait" style="${getPortraitStyle(person.name)}" data-initials="${escapeHtml(
-            initialsFromName(person.name)
-          )}"></div>
-          <div class="card-role">${escapeHtml(person.role)}</div>
-          <div class="card-name">${escapeHtml(person.name)}</div>
-          <div class="card-note">${escapeHtml(person.note)}</div>
-          <div class="card-tags">
-            ${tags.map((tag) => `<span class="choice-tag">${escapeHtml(tag)}</span>`).join("")}
-          </div>
-        </button>`;
+        return `<div class="search-row-card ${active ? "active" : ""}">
+          <button class="search-row-main" type="button" data-action="toggle" data-name="${escapeHtml(person.name)}">
+            <div class="search-avatar" style="${getPortraitStyle(person.name)}" data-initials="${escapeHtml(
+              initialsFromName(person.name)
+            )}"></div>
+            <div class="search-copy">
+              <div class="search-name-line">
+                <span class="search-name">${escapeHtml(person.name)}</span>
+                <span class="search-role">${escapeHtml(person.role)}</span>
+              </div>
+              <div class="search-note">${escapeHtml(person.note)}</div>
+              <div class="card-tags">
+                ${tags.map((tag) => `<span class="choice-tag">${escapeHtml(tag)}</span>`).join("")}
+              </div>
+            </div>
+          </button>
+          <button class="${active ? "secondary-button" : "primary-button"} search-pick-button" type="button" data-action="toggle" data-name="${escapeHtml(person.name)}">
+            ${active ? "선택됨" : "선택"}
+          </button>
+        </div>`;
       })
       .join("")}
   </div>`;
@@ -495,6 +505,8 @@ function render() {
   const example = state.examplePacks[state.currentTab];
   const otherTab = state.currentTab === "appearance" ? "personality" : "appearance";
   const bothDone = Boolean(state.results.appearance && state.results.personality);
+  const currentDone = Boolean(currentResult);
+  const stepTwoReady = currentSelection.length >= 3 && currentSelection.length <= 10;
 
   app.innerHTML = `
     <div class="shell">
@@ -551,6 +563,30 @@ function render() {
               </div>
             </div>
 
+            <div class="step-strip">
+              <div class="step-chip active">
+                <span class="step-number">1</span>
+                <div class="step-copy">
+                  <strong>트랙 고르기</strong>
+                  <span>${state.currentTab === "appearance" ? "외적 이상형" : "성격 이상형"}</span>
+                </div>
+              </div>
+              <div class="step-chip ${stepTwoReady ? "active" : ""}">
+                <span class="step-number">2</span>
+                <div class="step-copy">
+                  <strong>이름 3~10명 담기</strong>
+                  <span>${selectionCountText()}</span>
+                </div>
+              </div>
+              <div class="step-chip ${currentDone ? "active" : ""}">
+                <span class="step-number">3</span>
+                <div class="step-copy">
+                  <strong>분석 실행</strong>
+                  <span>${currentDone ? "완료됨" : "아직 실행 전"}</span>
+                </div>
+              </div>
+            </div>
+
             <div class="search-row">
               <input class="field" type="text" value="${escapeHtml(state.search)}" placeholder="${state.currentTab === "appearance" ? "외모 취향에 맞는 인물을 검색하세요" : "성격 이미지가 끌리는 인물을 검색하세요"}" data-role="search" />
               <button type="button" class="ghost-button" data-action="fill-example">${escapeHtml(example?.label || "예시 채우기")}</button>
@@ -568,17 +604,46 @@ function render() {
             </div>
 
             ${renderPeopleCards()}
+
+            <div class="selection-stage">
+              <div class="selection-stage-head">
+                <div>
+                  <div class="section-title selection-stage-title">Selected Names</div>
+                  <div class="section-caption">선택이 여기 쌓입니다. 이 블록이 다음 단계 시작점입니다.</div>
+                </div>
+              </div>
+              ${renderSelectedChips()}
+              <div class="analyze-panel">
+                <div class="analyze-copy">
+                  <strong>${stepTwoReady ? "다음 단계로 갈 수 있습니다." : "아직 3명이 안 됐습니다."}</strong>
+                  <span>${
+                    stepTwoReady
+                      ? `${state.currentTab === "appearance" ? "외적 공통점" : "성격 공통점"} 분석을 바로 실행하세요. 버튼을 아래에 숨기지 않고 현재 선택 블록 안으로 올렸습니다.`
+                      : "최소 3명을 선택하면 바로 분석 버튼이 활성화됩니다."
+                  }</span>
+                </div>
+                <div class="analyze-actions">
+                  <button type="button" class="ghost-button" data-action="reset-current">reset</button>
+                  <button type="button" class="primary-button" data-action="analyze" ${canAnalyze ? "" : "disabled"}>
+                    ${state.loading[state.currentTab] ? `<span class="loader"></span>` : `${state.currentTab === "appearance" ? "외적 공통점 분석" : "성격 공통점 분석"}`}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <aside class="sidebar-list">
             <div class="mini-card">
-              <h3>현재 선택</h3>
+              <h3>선택 기준</h3>
               <p>${state.currentTab === "appearance" ? "외적 취향은 얼굴선, 눈빛, 실루엣, 분위기 중심으로 정리됩니다." : "성격 취향은 공개 인터뷰 톤, 대중적 이미지, 사람을 대하는 결 중심으로 정리됩니다."}</p>
-              ${renderSelectedChips()}
             </div>
             <div class="mini-card">
               <h3>다음 단계</h3>
-              <p>${state.results[otherTab] ? `반대 카테고리 결과도 이미 만들어 두었습니다. 둘 다 있으면 최종 종합까지 이어서 만들 수 있습니다.` : `지금 카테고리 결과를 만든 뒤 반대 카테고리도 분석하면 최종 종합 결과까지 이어집니다.`}</p>
+              <p>${state.results[otherTab] ? `반대 카테고리 결과도 이미 있습니다. 현재 분석까지 끝나면 바로 최종 종합으로 넘어갈 수 있습니다.` : `지금 카테고리 분석을 끝낸 뒤 반대 카테고리로 넘어가면 최종 종합 결과까지 이어집니다.`}</p>
+            </div>
+            <div class="mini-card">
+              <h3>사진 소스</h3>
+              <p>지금 버전은 외부 인명사전 사진을 직접 붙이지 않고 있습니다. 검색 API나 별도 이미지 소스를 연결해야 안정적으로 운영할 수 있습니다.</p>
             </div>
           </aside>
         </section>
@@ -607,19 +672,6 @@ function render() {
           }
         </section>
       </main>
-
-      <div class="sticky-bar">
-        <div class="sticky-copy">
-          <strong>${state.currentTab === "appearance" ? "Appearance" : "Personality"}</strong>
-          <span class="sticky-note">${selectionCountText()} · ${canAnalyze ? "분석 가능" : "분석하려면 최소 3명이 필요"}</span>
-        </div>
-        <div class="sticky-actions">
-          <button type="button" class="ghost-button" data-action="reset-current">reset</button>
-          <button type="button" class="primary-button" data-action="analyze" ${canAnalyze ? "" : "disabled"}>
-            ${state.loading[state.currentTab] ? `<span class="loader"></span>` : "Analyze"}
-          </button>
-        </div>
-      </div>
 
       ${state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : ""}
     </div>
