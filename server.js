@@ -618,7 +618,7 @@ async function buildOpenAIAnalysis({ category, names }) {
     "deep_reply: longer than natural_reply, 2-3 sentences with more nuance or explanation.",
   ].join("\n");
 
-  const input = [
+  const inputText = [
     "Respond in valid json only.",
     `분석 종류: ${titleCaseCategory(category)}`,
     `선택 인물: ${names.join(", ")}`,
@@ -636,8 +636,12 @@ async function buildOpenAIAnalysis({ category, names }) {
   const responseJson = await callOpenAI({
     model,
     instructions: instruction,
-    input,
-    reasoning: { effort: "medium" },
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: inputText }],
+      },
+    ],
     store: false,
     max_output_tokens: 1200,
     text: analysisTextFormat(),
@@ -678,7 +682,7 @@ async function buildOpenAISynthesis({ appearanceResult, personalityResult }) {
     "deep_reply: 2-3 sentences, clearly fuller than natural_reply, with nuance and rationale.",
   ].join("\n");
 
-  const input = [
+  const inputText = [
     "Respond in valid json only.",
     JSON.stringify(
       {
@@ -694,8 +698,12 @@ async function buildOpenAISynthesis({ appearanceResult, personalityResult }) {
   const responseJson = await callOpenAI({
     model,
     instructions: instruction,
-    input,
-    reasoning: { effort: "medium" },
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: inputText }],
+      },
+    ],
     store: false,
     max_output_tokens: 900,
     text: synthesisTextFormat(),
