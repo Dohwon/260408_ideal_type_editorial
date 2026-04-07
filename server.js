@@ -30,12 +30,53 @@ const mimeTypes = {
 };
 
 const localAnalysisAllowed = new Set(curatedPeople.map((person) => normalizeName(person.name)));
+const personDescriptionKeywords = [
+  "배우",
+  "가수",
+  "아이돌",
+  "랩퍼",
+  "래퍼",
+  "뮤지션",
+  "작곡가",
+  "방송인",
+  "모델",
+  "연예인",
+  "탤런트",
+  "코미디언",
+  "개그맨",
+  "개그우먼",
+  "감독",
+  "운동선수",
+  "축구선수",
+  "야구선수",
+  "농구선수",
+  "피겨",
+  "아나운서",
+  "유튜버",
+  "크리에이터",
+  "인플루언서",
+  "작가",
+  "화가",
+  "예술가",
+  "영화배우",
+  "드라마",
+  "대한민국",
+];
 
 function normalizeName(value) {
   return String(value || "")
     .trim()
     .replace(/\s+/g, "")
     .toLowerCase();
+}
+
+function isJamoOnly(value) {
+  return /^[\u1100-\u11ff\u3130-\u318f]+$/.test(String(value || "").trim());
+}
+
+function isSearchableQuery(value) {
+  const trimmed = String(value || "").trim();
+  return trimmed.length >= 2 && !isJamoOnly(trimmed);
 }
 
 function titleCaseCategory(category) {
@@ -174,7 +215,13 @@ function buildLocalSearchResults(query, category) {
       note: person.note,
       imageUrl: "",
       source: "local",
+      isPersonCandidate: true,
     }));
+}
+
+function looksLikePersonEntry(item) {
+  const combined = `${stripHtmlTags(item?.title)} ${stripHtmlTags(item?.description)}`.toLowerCase();
+  return personDescriptionKeywords.some((keyword) => combined.includes(keyword.toLowerCase()));
 }
 
 async function fetchNaverSearch(url) {
@@ -202,6 +249,7 @@ async function buildNaverSearchPreview(query) {
   const items = Array.isArray(payload?.items) ? payload.items : [];
   const seenKeys = new Set();
   const encyclopediaResults = items
+    .filter((item) => looksLikePersonEntry(item))
     .map((item, index) => {
       const title = stripHtmlTags(item.title) || query;
       const description = stripHtmlTags(item.description) || "네이버 백과사전 인물 결과";
@@ -213,37 +261,18 @@ async function buildNaverSearchPreview(query) {
         note: description,
         imageUrl: item.thumbnail || "",
         source: "naver",
+        isPersonCandidate: true,
       };
     })
     .filter((item) => item.name);
 
-  if (encyclopediaResults.length > 0) {
-    return encyclopediaResults;
-  }
-
-  const imageUrl = `https://openapi.naver.com/v1/search/image?query=${encodeURIComponent(
-    `${query} 인물`
-  )}&display=6&start=1&sort=sim&filter=medium`;
-  const imagePayload = await fetchNaverSearch(imageUrl);
-  const imageItems = Array.isArray(imagePayload?.items) ? imagePayload.items : [];
-  return imageItems.slice(0, 6).map((item, index) => {
-    const note = stripHtmlTags(item.title) || `${query} 관련 이미지 검색 결과`;
-    return {
-      id: `naver-image:${query}:${index}`,
-      name: query,
-      selectionName: buildUniqueSelectionName(query, note, seenKeys),
-      role: "네이버 이미지 검색",
-      note,
-      imageUrl: item.thumbnail || item.link || "",
-      source: "naver",
-    };
-  });
+  return encyclopediaResults;
 }
 
 async function searchPeople(payload) {
   const query = String(payload?.query || "").trim();
   const category = payload?.category === "personality" ? "personality" : "appearance";
-  if (!query) {
+  if (!isSearchableQuery(query)) {
     return {
       provider: "none",
       results: [],
@@ -281,12 +310,32 @@ async function searchPeople(payload) {
               name: query,
               selectionName: query,
               role: "직접 입력",
-              note: "검색 결과가 없어도 이 이름 그대로 분석에 사용할 수 있습니다.",
+              note: "인물 후보를 찾지 못했습니다. 인물 이름으로 다시 검색해 주세요.",
               imageUrl: "",
               source: "manual",
+              isPersonCandidate: false,
             },
           ],
   };
+}
+
+function hasInvalidNonPersonSelection(names, selectionMeta) {
+  const metaIndex = new Map(
+    (Array.isArray(selectionMeta) ? selectionMeta : [])
+      .filter((item) => item && item.name)
+      .map((item) => [normalizeName(item.name), item])
+  );
+
+  for (const name of names) {
+    if (localAnalysisAllowed.has(normalizeName(name))) {
+      continue;
+    }
+    const meta = metaIndex.get(normalizeName(name));
+    if (meta && meta.isPersonCandidate === false) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function topTagsForCategory(category, people) {
@@ -503,6 +552,7 @@ function analysisTextFormat() {
   return {
     format: {
       type: "json_schema",
+      name: "ideal_type_analysis",
       strict: true,
       schema: {
         type: "object",
@@ -556,6 +606,7 @@ function synthesisTextFormat() {
   return {
     format: {
       type: "json_schema",
+      name: "ideal_type_synthesis",
       strict: true,
       schema: {
         type: "object",
@@ -719,12 +770,16 @@ async function buildOpenAISynthesis({ appearanceResult, personalityResult }) {
 async function buildAnalysis(payload) {
   const category = payload?.category;
   const names = sanitizeNames(payload?.names);
+  const selectionMeta = payload?.selectionMeta;
 
   if (!["appearance", "personality"].includes(category)) {
     throw new Error("category는 appearance 또는 personality여야 합니다.");
   }
   if (names.length < 3 || names.length > 10) {
     throw new Error("이상형 분석은 3명 이상 10명 이하로만 가능합니다.");
+  }
+  if (hasInvalidNonPersonSelection(names, selectionMeta)) {
+    throw new Error("인물이 아닌 항목이 섞여 있습니다. 인물 이름을 다시 선택해 주세요.");
   }
 
   const local = buildLocalAnalysis({ category, names });

@@ -7,10 +7,13 @@ const state = {
   currentTab: "appearance",
   search: "",
   searchResults: [],
-  customName: "",
   selections: {
     appearance: [],
     personality: [],
+  },
+  selectionMeta: {
+    appearance: {},
+    personality: {},
   },
   results: {
     appearance: null,
@@ -26,6 +29,7 @@ const state = {
   },
   portrait: null,
   toast: "",
+  keepSearchFocus: false,
 };
 
 const accentPairs = [
@@ -51,6 +55,7 @@ function saveState() {
     JSON.stringify({
       currentTab: state.currentTab,
       selections: state.selections,
+      selectionMeta: state.selectionMeta,
       results: state.results,
       synthesis: state.synthesis,
     })
@@ -69,6 +74,9 @@ function loadState() {
     }
     if (parsed.selections) {
       state.selections = parsed.selections;
+    }
+    if (parsed.selectionMeta) {
+      state.selectionMeta = parsed.selectionMeta;
     }
     if (parsed.results) {
       state.results = parsed.results;
@@ -135,6 +143,7 @@ function selectionCountText() {
 
 function resetCurrentTab() {
   state.selections[state.currentTab] = [];
+  state.selectionMeta[state.currentTab] = {};
   state.results[state.currentTab] = null;
   state.synthesis = null;
   state.portrait = null;
@@ -142,7 +151,21 @@ function resetCurrentTab() {
   render();
 }
 
-function addNameToCurrentTab(name) {
+function setSelectionMeta(tab, name, meta) {
+  if (!name) {
+    return;
+  }
+  state.selectionMeta[tab][name] = meta;
+}
+
+function clearSelectionMeta(tab, name) {
+  if (!name) {
+    return;
+  }
+  delete state.selectionMeta[tab][name];
+}
+
+function addNameToCurrentTab(name, meta = null) {
   const trimmed = name.trim();
   if (!trimmed) {
     return;
@@ -157,25 +180,31 @@ function addNameToCurrentTab(name) {
     return;
   }
   current.push(trimmed);
+  if (meta) {
+    setSelectionMeta(state.currentTab, trimmed, meta);
+  }
   state.results[state.currentTab] = null;
   state.synthesis = null;
   state.portrait = null;
-  state.customName = "";
   saveState();
   render();
 }
 
-function togglePerson(name) {
+function togglePerson(name, meta = null) {
   const current = getCurrentSelection();
   const index = current.indexOf(name);
   if (index >= 0) {
     current.splice(index, 1);
+    clearSelectionMeta(state.currentTab, name);
   } else {
     if (current.length >= 10) {
       setToast("최대 10명까지만 넣을 수 있습니다.");
       return;
     }
     current.push(name);
+    if (meta) {
+      setSelectionMeta(state.currentTab, name, meta);
+    }
   }
   state.results[state.currentTab] = null;
   state.synthesis = null;
@@ -186,7 +215,7 @@ function togglePerson(name) {
 
 async function fetchSearchResults(query) {
   const trimmed = query.trim();
-  if (!trimmed) {
+  if (!shouldTriggerSearch(trimmed)) {
     state.searchResults = [];
     state.loading.search = false;
     render();
@@ -223,6 +252,7 @@ async function fetchSearchResults(query) {
 function removeFromCurrent(name) {
   const current = getCurrentSelection();
   state.selections[state.currentTab] = current.filter((value) => value !== name);
+  clearSelectionMeta(state.currentTab, name);
   state.results[state.currentTab] = null;
   state.synthesis = null;
   state.portrait = null;
@@ -245,6 +275,10 @@ async function analyzeCurrentTab() {
       body: JSON.stringify({
         category: state.currentTab,
         names,
+        selectionMeta: names.map((name) => ({
+          name,
+          ...(state.selectionMeta[state.currentTab][name] || {}),
+        })),
       }),
     });
     const result = await response.json();
@@ -528,7 +562,6 @@ function render() {
   const currentSelection = getCurrentSelection();
   const currentResult = state.results[state.currentTab];
   const canAnalyze = currentSelection.length >= 3 && currentSelection.length <= 10;
-  const otherTab = state.currentTab === "appearance" ? "personality" : "appearance";
   const bothDone = Boolean(state.results.appearance && state.results.personality);
   const currentDone = Boolean(currentResult);
   const stepTwoReady = canAnalyze;
@@ -549,7 +582,7 @@ function render() {
           <div class="brand-title">이름 몇 개만으로 이상형 설명하기</div>
         </div>
         <div class="topbar-note">
-          외적 이상형과 성격 이상형을 고른 뒤, 마지막에 둘을 합쳐 최종 한 줄까지 만들 수 있습니다.
+          외적 이상형과 성격 이상형을 고른 뒤,<br />내가 원하는 이상형을 설명하는 글을 만들 수 있습니다.
         </div>
       </header>
 
@@ -607,15 +640,21 @@ function render() {
             <div class="selection-stage">
               <div class="selection-stage-head">
                 <div>
-                  <div class="section-title selection-stage-title">Selected Names</div>
+                  <div class="section-title selection-stage-title">Search Results</div>
                   <div class="section-caption">${searchPlaceholder}</div>
                 </div>
               </div>
-              ${renderSelectedChips()}
+              ${renderPeopleCards()}
             </div>
 
-            <div class="candidate-stage">
-              ${renderPeopleCards()}
+            <div class="selection-stage selection-stage-secondary">
+              <div class="selection-stage-head">
+                <div>
+                  <div class="section-title selection-stage-title">Selected Names</div>
+                  <div class="section-caption">선택한 인물을 여기서 바로 확인합니다.</div>
+                </div>
+              </div>
+              ${renderSelectedChips()}
             </div>
 
             <div class="analyze-panel">
@@ -667,6 +706,14 @@ function render() {
   `;
 
   bindEvents();
+  if (state.keepSearchFocus) {
+    const searchInput = app.querySelector("[data-role='search']");
+    if (searchInput) {
+      const caret = searchInput.value.length;
+      searchInput.focus();
+      searchInput.setSelectionRange(caret, caret);
+    }
+  }
 }
 
 function bindEvents() {
@@ -675,7 +722,6 @@ function bindEvents() {
       state.currentTab = button.dataset.tab;
       state.search = "";
       state.searchResults = [];
-      state.customName = "";
       saveState();
       render();
     });
@@ -683,25 +729,58 @@ function bindEvents() {
 
   app.querySelector("[data-role='search']")?.addEventListener("input", (event) => {
     state.search = event.target.value;
+    state.keepSearchFocus = true;
     clearTimeout(bindEvents.searchTimer);
+    if (!shouldTriggerSearch(state.search)) {
+      state.searchResults = [];
+      state.loading.search = false;
+      return;
+    }
     bindEvents.searchTimer = setTimeout(() => {
       fetchSearchResults(state.search);
-    }, 220);
-    render();
+    }, 320);
   });
 
   app.querySelectorAll("[data-action='toggle']").forEach((button) => {
-    button.addEventListener("click", () => togglePerson(button.dataset.name));
+    button.addEventListener("click", () => {
+      state.keepSearchFocus = false;
+      const choiceName = button.dataset.name;
+      const person = state.searchResults.find((item) => (item.selectionName || item.name) === choiceName);
+      const meta = person
+        ? {
+            source: person.source,
+            role: person.role,
+            note: person.note,
+            isPersonCandidate: Boolean(person.isPersonCandidate),
+          }
+        : null;
+      togglePerson(choiceName, meta);
+    });
   });
 
   app.querySelectorAll("[data-action='remove']").forEach((button) => {
-    button.addEventListener("click", () => removeFromCurrent(button.dataset.name));
+    button.addEventListener("click", () => {
+      state.keepSearchFocus = false;
+      removeFromCurrent(button.dataset.name);
+    });
   });
 
-  app.querySelector("[data-action='reset-current']")?.addEventListener("click", resetCurrentTab);
-  app.querySelector("[data-action='analyze']")?.addEventListener("click", analyzeCurrentTab);
-  app.querySelector("[data-action='synthesize']")?.addEventListener("click", synthesizeResults);
-  app.querySelector("[data-action='generate-image']")?.addEventListener("click", generatePortrait);
+  app.querySelector("[data-action='reset-current']")?.addEventListener("click", () => {
+    state.keepSearchFocus = false;
+    resetCurrentTab();
+  });
+  app.querySelector("[data-action='analyze']")?.addEventListener("click", () => {
+    state.keepSearchFocus = false;
+    analyzeCurrentTab();
+  });
+  app.querySelector("[data-action='synthesize']")?.addEventListener("click", () => {
+    state.keepSearchFocus = false;
+    synthesizeResults();
+  });
+  app.querySelector("[data-action='generate-image']")?.addEventListener("click", () => {
+    state.keepSearchFocus = false;
+    generatePortrait();
+  });
 
   app.querySelectorAll("[data-action='copy']").forEach((button) => {
     button.addEventListener("click", () => copyText(button.dataset.copy));
@@ -723,6 +802,14 @@ async function init() {
   } catch {
     setToast("카탈로그를 불러오지 못했습니다.");
   }
+}
+
+function shouldTriggerSearch(query) {
+  const trimmed = String(query || "").trim();
+  if (trimmed.length < 2) {
+    return false;
+  }
+  return !/^[\u1100-\u11ff\u3130-\u318f]+$/.test(trimmed);
 }
 
 init();
