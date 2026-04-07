@@ -344,7 +344,7 @@ async function copyText(value) {
 function renderSelectedChips() {
   const current = getCurrentSelection();
   if (current.length === 0) {
-    return `<div class="empty-state">이름을 아직 고르지 않았습니다. 카드에서 고르거나 직접 입력해 보세요.</div>`;
+    return `<div class="empty-state">선택한 인물이 여기에 쌓입니다.</div>`;
   }
   return `<div class="selected-wrap">
     ${current
@@ -361,13 +361,10 @@ function renderSelectedChips() {
 function renderPeopleCards() {
   const people = filteredPeople();
   if (!state.search.trim()) {
-    return `<div class="empty-state">이름을 검색하면 후보가 뜹니다. 미리 사람을 펼쳐두지 않고, 검색했을 때만 보여주도록 바꿨습니다.</div>`;
+    return `<div class="empty-state">이름을 검색하면 후보가 뜹니다.</div>`;
   }
   if (state.loading.search) {
     return `<div class="empty-state">검색 결과를 불러오는 중입니다.</div>`;
-  }
-  if (people.length === 0) {
-    return `<div class="empty-state">검색 결과가 없습니다. 원하는 사람이 없으면 아래 입력칸에서 직접 추가하면 됩니다.</div>`;
   }
   const current = getCurrentSelection();
   return `<div class="search-results">
@@ -449,7 +446,7 @@ function renderResultCard(result, title) {
         <div class="result-eyebrow">${escapeHtml(title)}</div>
         <h2 class="result-title">${escapeHtml(result.title)}</h2>
       </div>
-      <div class="source-badge">${result.source === "openai" ? "AI analysis" : "curated demo"}</div>
+      <div class="source-badge">${result.source === "openai" ? "AI analysis" : "local fallback"}</div>
     </div>
     <p class="headline">${escapeHtml(result.headline)}</p>
     <p class="summary">${escapeHtml(result.summary)}</p>
@@ -481,7 +478,7 @@ function renderSynthesisCard(result) {
         <div class="result-eyebrow">Final Editorial</div>
         <h2 class="result-title">${escapeHtml(result.title)}</h2>
       </div>
-      <div class="source-badge">${result.source === "openai" ? "AI synthesis" : "local synthesis"}</div>
+      <div class="source-badge">${result.source === "openai" ? "AI synthesis" : "local fallback"}</div>
     </div>
     <p class="headline">${escapeHtml(result.headline)}</p>
     <p class="summary">${escapeHtml(result.summary)}</p>
@@ -531,162 +528,124 @@ function render() {
   const currentSelection = getCurrentSelection();
   const currentResult = state.results[state.currentTab];
   const canAnalyze = currentSelection.length >= 3 && currentSelection.length <= 10;
-  const example = state.examplePacks[state.currentTab];
   const otherTab = state.currentTab === "appearance" ? "personality" : "appearance";
   const bothDone = Boolean(state.results.appearance && state.results.personality);
   const currentDone = Boolean(currentResult);
-  const stepTwoReady = currentSelection.length >= 3 && currentSelection.length <= 10;
+  const stepTwoReady = canAnalyze;
+  const trackLabel = state.currentTab === "appearance" ? "외적 이상형" : "성격 이상형";
+  const searchPlaceholder =
+    state.currentTab === "appearance" ? "외적 이상형이 떠오르는 인물을 검색하세요" : "성격 이미지가 끌리는 인물을 검색하세요";
+  const stepTwoLabel = state.currentTab === "appearance" ? "외적 공통점 분석하기" : "성격 공통점 분석하기";
+  const stepThreeLabel = "이미지 생성하기";
+  const stageOneState = currentSelection.length > 0 ? "complete" : "current";
+  const stageTwoState = currentDone ? "complete" : stepTwoReady ? "current" : "locked";
+  const stageThreeState = state.portrait ? "complete" : state.synthesis ? "current" : "locked";
 
   app.innerHTML = `
     <div class="shell">
       <header class="topbar">
         <div class="brand">
           <div class="brand-mark">Ideal Type Editorial</div>
-          <div class="brand-title">누가 당신의 이상형을 설명하나요?</div>
+          <div class="brand-title">이름 몇 개만으로 이상형 설명하기</div>
         </div>
         <div class="topbar-note">
-          3명에서 10명까지 고르면 공통된 취향을 에디토리얼 톤으로 정리합니다.
-          추천 카드만으로는 키 없이 바로 체험할 수 있고, API 키가 있으면 임의 인물 이름도 분석합니다.
+          외적 이상형과 성격 이상형을 고른 뒤, 마지막에 둘을 합쳐 최종 한 줄까지 만들 수 있습니다.
         </div>
       </header>
 
       <main class="page">
-        <section class="hero">
-          <div class="hero-card">
-            <div class="hero-eyebrow">Step 01 / Curate</div>
-            <h1>이름 몇 개만으로 취향을 말하게.</h1>
-            <p>
-              외적 이상형과 성격 이상형을 따로 고른 뒤, 마지막에 둘을 합쳐 최종 한 줄까지 만들 수 있습니다.
-              결과는 먼저 자연스럽게 말하는 기본 문장으로 보여주고, 그 아래에 한 줄 요약과 조금 더 자세한 설명을 함께 정리합니다.
-            </p>
-          </div>
-          <aside class="hero-side">
-            <div class="side-title">오늘의 설계 방향</div>
-            <div class="stack">
-              <div class="stack-item">
-                <div class="stack-kicker">Selection Rule</div>
-                <div class="stack-copy">각 카테고리별 최소 3명, 최대 10명. 인원이 늘수록 공통점은 선명해지지만 취향 폭은 좁아집니다.</div>
+        <section class="studio-shell">
+          <aside class="progress-rail">
+            <div class="rail-label">Selection Studio</div>
+            <div class="rail-steps">
+              <div class="rail-step ${stageOneState}">
+                <div class="rail-number">1</div>
+                <div class="rail-copy">
+                  <strong>이상형 고르기</strong>
+                  <span>${selectionCountText()} / 3명~10명</span>
+                </div>
               </div>
-              <div class="stack-item">
-                <div class="stack-kicker">Demo Mode</div>
-                <div class="stack-copy">추천 카드로는 서버 키 없이도 바로 분석됩니다. 사용자 예시 세트도 바로 채워 볼 수 있습니다.</div>
+              <div class="rail-step ${stageTwoState}">
+                <div class="rail-number">2</div>
+                <div class="rail-copy">
+                  <strong>${stepTwoLabel}</strong>
+                  <span>${currentDone ? "완료됨" : stepTwoReady ? "이제 실행 가능" : "3명 이상 선택 필요"}</span>
+                </div>
               </div>
-              <div class="stack-item">
-                <div class="stack-kicker">Final Use</div>
-                <div class="stack-copy">사람들이 "너 이상형 뭐야?"라고 물었을 때 바로 말할 수 있는 문장까지 한 번에 만듭니다.</div>
+              <div class="rail-step ${stageThreeState}">
+                <div class="rail-number">3</div>
+                <div class="rail-copy">
+                  <strong>${stepThreeLabel}</strong>
+                  <span>${state.portrait ? "생성 완료" : state.synthesis ? "지금 생성 가능" : "종합 결과 후 가능"}</span>
+                </div>
               </div>
             </div>
           </aside>
-        </section>
 
-        <section class="control-grid">
-          <div class="panel">
+          <div class="panel studio-panel">
             <div class="control-header">
               <div>
                 <div class="section-title">Selection Studio</div>
-                <div class="section-caption">카테고리를 바꾸면 선택 목록도 따로 저장됩니다. 지금은 <strong>${state.currentTab === "appearance" ? "외적 이상형" : "성격 이상형"}</strong>을 고르는 중입니다.</div>
+                <div class="section-caption">카테고리를 바꾸면 선택 목록이 따로 저장됩니다. 지금은 <strong>${trackLabel}</strong>을 고르는 중입니다.</div>
               </div>
               <div class="tabs">
-                <button type="button" class="tab ${state.currentTab === "appearance" ? "active" : ""}" data-action="tab" data-tab="appearance">Appearance</button>
-                <button type="button" class="tab ${state.currentTab === "personality" ? "active" : ""}" data-action="tab" data-tab="personality">Personality</button>
+                <button type="button" class="tab ${state.currentTab === "appearance" ? "active" : ""}" data-action="tab" data-tab="appearance">외적 이상형</button>
+                <button type="button" class="tab ${state.currentTab === "personality" ? "active" : ""}" data-action="tab" data-tab="personality">성격 이상형</button>
               </div>
             </div>
 
-            <div class="step-strip">
-              <div class="step-chip active">
-                <span class="step-number">1</span>
-                <div class="step-copy">
-                  <strong>트랙 고르기</strong>
-                  <span>${state.currentTab === "appearance" ? "외적 이상형" : "성격 이상형"}</span>
-                </div>
-              </div>
-              <div class="step-chip ${stepTwoReady ? "active" : ""}">
-                <span class="step-number">2</span>
-                <div class="step-copy">
-                  <strong>이름 3~10명 담기</strong>
-                  <span>${selectionCountText()}</span>
-                </div>
-              </div>
-              <div class="step-chip ${currentDone ? "active" : ""}">
-                <span class="step-number">3</span>
-                <div class="step-copy">
-                  <strong>분석 실행</strong>
-                  <span>${currentDone ? "완료됨" : "아직 실행 전"}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="search-row">
-              <input class="field" type="text" value="${escapeHtml(state.search)}" placeholder="${state.currentTab === "appearance" ? "외모 취향에 맞는 인물을 검색하세요" : "성격 이미지가 끌리는 인물을 검색하세요"}" data-role="search" />
-              <button type="button" class="ghost-button" data-action="fill-example">${escapeHtml(example?.label || "예시 채우기")}</button>
+            <div class="search-stack">
+              <input class="field" type="text" value="${escapeHtml(state.search)}" placeholder="${searchPlaceholder}" data-role="search" />
+              <div class="search-hint">이름을 검색하면 후보가 뜹니다.</div>
             </div>
 
             <div class="meta-row">
               <span class="meta-chip"><strong>Target</strong> 3명 ~ 10명</span>
               <span class="meta-chip"><strong>Current</strong> ${selectionCountText()}</span>
-              <span class="meta-chip"><strong>${state.supportsCustomAnalysis ? "AI" : "Demo"}</strong> ${state.supportsCustomAnalysis ? "임의 이름 분석 가능" : "추천 카드 조합 즉시 분석"}</span>
-              <span class="meta-chip"><strong>${state.supportsNaverSearch ? "Naver" : "Local"}</strong> ${state.supportsNaverSearch ? "검색 시 썸네일 프리뷰 사용" : "검색은 로컬 후보 fallback"}</span>
             </div>
-
-            <div class="add-row">
-              <input type="text" value="${escapeHtml(state.customName)}" placeholder="${state.currentTab === "appearance" ? "예: 김무열" : "예: 하정우"}" data-role="custom-name" />
-              <button type="button" class="secondary-button" data-action="add-custom">직접 추가</button>
-            </div>
-
-            ${renderPeopleCards()}
 
             <div class="selection-stage">
               <div class="selection-stage-head">
                 <div>
                   <div class="section-title selection-stage-title">Selected Names</div>
-                  <div class="section-caption">선택이 여기 쌓입니다. 이 블록이 다음 단계 시작점입니다.</div>
+                  <div class="section-caption">${searchPlaceholder}</div>
                 </div>
               </div>
               ${renderSelectedChips()}
-              <div class="analyze-panel">
-                <div class="analyze-copy">
-                  <strong>${stepTwoReady ? "다음 단계로 갈 수 있습니다." : "아직 3명이 안 됐습니다."}</strong>
-                  <span>${
-                    stepTwoReady
-                      ? `${state.currentTab === "appearance" ? "외적 공통점" : "성격 공통점"} 분석을 바로 실행하세요. 버튼을 아래에 숨기지 않고 현재 선택 블록 안으로 올렸습니다.`
-                      : "최소 3명을 선택하면 바로 분석 버튼이 활성화됩니다."
-                  }</span>
-                </div>
-                <div class="analyze-actions">
-                  <button type="button" class="ghost-button" data-action="reset-current">reset</button>
-                  <button type="button" class="primary-button" data-action="analyze" ${canAnalyze ? "" : "disabled"}>
-                    ${state.loading[state.currentTab] ? `<span class="loader"></span>` : `${state.currentTab === "appearance" ? "외적 공통점 분석" : "성격 공통점 분석"}`}
-                  </button>
-                </div>
+            </div>
+
+            <div class="candidate-stage">
+              ${renderPeopleCards()}
+            </div>
+
+            <div class="analyze-panel">
+              <div class="analyze-copy">
+                <strong>${stepTwoReady ? "이제 분석할 수 있습니다." : "먼저 3명 이상 선택해 주세요."}</strong>
+                <span>${
+                  stepTwoReady
+                    ? `${stepTwoLabel} 버튼을 눌러 현재 선택의 공통점을 바로 정리합니다.`
+                    : "최소 3명, 최대 10명까지 담은 뒤 다음 단계로 넘어갑니다."
+                }</span>
+              </div>
+              <div class="analyze-actions">
+                <button type="button" class="ghost-button" data-action="reset-current">reset</button>
+                <button type="button" class="primary-button" data-action="analyze" ${canAnalyze ? "" : "disabled"}>
+                  ${state.loading[state.currentTab] ? `<span class="loader"></span>` : stepTwoLabel}
+                </button>
               </div>
             </div>
           </div>
-
-          <aside class="sidebar-list">
-            <div class="mini-card">
-              <h3>선택 기준</h3>
-              <p>${state.currentTab === "appearance" ? "외적 취향은 얼굴선, 눈빛, 실루엣, 분위기 중심으로 정리됩니다." : "성격 취향은 공개 인터뷰 톤, 대중적 이미지, 사람을 대하는 결 중심으로 정리됩니다."}</p>
-            </div>
-            <div class="mini-card">
-              <h3>다음 단계</h3>
-              <p>${state.results[otherTab] ? `반대 카테고리 결과도 이미 있습니다. 현재 분석까지 끝나면 바로 최종 종합으로 넘어갈 수 있습니다.` : `지금 카테고리 분석을 끝낸 뒤 반대 카테고리로 넘어가면 최종 종합 결과까지 이어집니다.`}</p>
-            </div>
-            <div class="mini-card">
-              <h3>사진 소스</h3>
-              <p>${state.supportsNaverSearch ? "현재는 네이버 이미지 검색 API 결과를 검색 프리뷰로 사용합니다. 선택 이름은 그대로 유지하고, 썸네일만 보조적으로 붙입니다." : "현재 서버에는 외부 이미지 검색 키가 없어 로컬 후보만 보여줍니다. 키를 넣으면 검색 썸네일 프리뷰가 바로 켜집니다."}</p>
-            </div>
-          </aside>
         </section>
 
         <section class="results">
-          ${renderResultCard(currentResult, state.currentTab === "appearance" ? "Appearance Analysis" : "Personality Analysis")}
+          ${renderResultCard(currentResult, stepTwoLabel)}
           ${
             bothDone
               ? `<section class="panel">
                   <div class="control-header">
                     <div>
-                      <div class="section-title">Final Synthesis</div>
-                      <div class="section-caption">외적 이상형과 성격 이상형을 합쳐 최종 한 줄을 만듭니다.</div>
+                      <div class="section-title">최종 종합</div>
+                      <div class="section-caption">외적 이상형과 성격 이상형을 합쳐 마지막 설명과 이미지 생성 단계까지 이어집니다.</div>
                     </div>
                     <button type="button" class="primary-button" data-action="synthesize">
                       ${state.loading.synthesis ? `<span class="loader"></span>` : "최종 종합 만들기"}
@@ -731,39 +690,12 @@ function bindEvents() {
     render();
   });
 
-  app.querySelector("[data-role='custom-name']")?.addEventListener("input", (event) => {
-    state.customName = event.target.value;
-  });
-
-  app.querySelector("[data-role='custom-name']")?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      addNameToCurrentTab(state.customName);
-    }
-  });
-
   app.querySelectorAll("[data-action='toggle']").forEach((button) => {
     button.addEventListener("click", () => togglePerson(button.dataset.name));
   });
 
   app.querySelectorAll("[data-action='remove']").forEach((button) => {
     button.addEventListener("click", () => removeFromCurrent(button.dataset.name));
-  });
-
-  app.querySelector("[data-action='fill-example']")?.addEventListener("click", () => {
-    const example = state.examplePacks[state.currentTab];
-    if (!example) {
-      return;
-    }
-    state.selections[state.currentTab] = [...example.names];
-    state.results[state.currentTab] = null;
-    state.synthesis = null;
-    state.portrait = null;
-    saveState();
-    render();
-  });
-
-  app.querySelector("[data-action='add-custom']")?.addEventListener("click", () => {
-    addNameToCurrentTab(state.customName);
   });
 
   app.querySelector("[data-action='reset-current']")?.addEventListener("click", resetCurrentTab);

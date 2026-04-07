@@ -116,6 +116,37 @@ function stripHtmlTags(value) {
     .trim();
 }
 
+function firstSentence(value) {
+  return String(value || "")
+    .split(/(?<=[.!?])\s+/)[0]
+    .trim();
+}
+
+function shortDescriptionLabel(value) {
+  return firstSentence(stripHtmlTags(value))
+    .replace(/\s+/g, " ")
+    .replace(/[()[\]]/g, "")
+    .slice(0, 22)
+    .trim();
+}
+
+function buildUniqueSelectionName(name, description, seenKeys) {
+  let candidate = String(name || "").trim() || "이름 미상";
+  const descriptionLabel = shortDescriptionLabel(description);
+  if (seenKeys.has(normalizeName(candidate)) && descriptionLabel) {
+    candidate = `${candidate} (${descriptionLabel})`;
+  }
+
+  const base = candidate;
+  let suffix = 2;
+  while (seenKeys.has(normalizeName(candidate))) {
+    candidate = `${base} ${suffix}`;
+    suffix += 1;
+  }
+  seenKeys.add(normalizeName(candidate));
+  return candidate;
+}
+
 function buildLocalSearchResults(query, category) {
   const keyword = query.trim().toLowerCase();
   if (!keyword) {
@@ -146,13 +177,10 @@ function buildLocalSearchResults(query, category) {
     }));
 }
 
-async function buildNaverSearchPreview(query) {
+async function fetchNaverSearch(url) {
   if (!naverClientId || !naverClientSecret) {
     return [];
   }
-
-  const encodedQuery = encodeURIComponent(`${query} 연예인 프로필`);
-  const url = `https://openapi.naver.com/v1/search/image?query=${encodedQuery}&display=8&start=1&sort=sim&filter=medium`;
   const response = await fetch(url, {
     headers: {
       "X-Naver-Client-Id": naverClientId,
@@ -161,26 +189,55 @@ async function buildNaverSearchPreview(query) {
   });
 
   if (!response.ok) {
-    throw new Error("네이버 이미지 검색 요청이 실패했습니다.");
+    throw new Error("네이버 검색 요청이 실패했습니다.");
   }
 
-  const payload = await response.json();
-  const first = payload?.items?.[0];
-  if (!first) {
-    return [];
+  return response.json();
+}
+
+async function buildNaverSearchPreview(query) {
+  const encodedQuery = encodeURIComponent(query);
+  const encyclopediaUrl = `https://openapi.naver.com/v1/search/encyc.json?query=${encodedQuery}&display=6&start=1`;
+  const payload = await fetchNaverSearch(encyclopediaUrl);
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const seenKeys = new Set();
+  const encyclopediaResults = items
+    .map((item, index) => {
+      const title = stripHtmlTags(item.title) || query;
+      const description = stripHtmlTags(item.description) || "네이버 백과사전 인물 결과";
+      return {
+        id: `naver-encyc:${query}:${index}`,
+        name: title,
+        selectionName: buildUniqueSelectionName(title, description, seenKeys),
+        role: "네이버 백과사전",
+        note: description,
+        imageUrl: item.thumbnail || "",
+        source: "naver",
+      };
+    })
+    .filter((item) => item.name);
+
+  if (encyclopediaResults.length > 0) {
+    return encyclopediaResults;
   }
 
-  return [
-    {
-      id: `naver:${query}`,
+  const imageUrl = `https://openapi.naver.com/v1/search/image?query=${encodeURIComponent(
+    `${query} 인물`
+  )}&display=6&start=1&sort=sim&filter=medium`;
+  const imagePayload = await fetchNaverSearch(imageUrl);
+  const imageItems = Array.isArray(imagePayload?.items) ? imagePayload.items : [];
+  return imageItems.slice(0, 6).map((item, index) => {
+    const note = stripHtmlTags(item.title) || `${query} 관련 이미지 검색 결과`;
+    return {
+      id: `naver-image:${query}:${index}`,
       name: query,
-      selectionName: query,
+      selectionName: buildUniqueSelectionName(query, note, seenKeys),
       role: "네이버 이미지 검색",
-      note: stripHtmlTags(first.title) || `${query} 관련 이미지 검색 결과`,
-      imageUrl: first.thumbnail || first.link || "",
+      note,
+      imageUrl: item.thumbnail || item.link || "",
       source: "naver",
-    },
-  ];
+    };
+  });
 }
 
 async function searchPeople(payload) {
@@ -215,7 +272,20 @@ async function searchPeople(payload) {
 
   return {
     provider: externalResults.length > 0 ? "naver" : "local",
-    results: merged.slice(0, 12),
+    results:
+      merged.length > 0
+        ? merged.slice(0, 12)
+        : [
+            {
+              id: `manual:${query}`,
+              name: query,
+              selectionName: query,
+              role: "직접 입력",
+              note: "검색 결과가 없어도 이 이름 그대로 분석에 사용할 수 있습니다.",
+              imageUrl: "",
+              source: "manual",
+            },
+          ],
   };
 }
 
@@ -456,6 +526,7 @@ async function buildOpenAIAnalysis({ category, names }) {
   ].join("\n");
 
   const input = [
+    "Respond in valid json only.",
     `분석 종류: ${titleCaseCategory(category)}`,
     `선택 인물: ${names.join(", ")}`,
     "목표: 사람들이 '너 이상형 뭐야?'라고 물었을 때 바로 말할 수 있는 문장까지 정리한다.",
@@ -518,15 +589,18 @@ async function buildOpenAISynthesis({ appearanceResult, personalityResult }) {
     "deep_reply: 2-3 sentences, clearly fuller than natural_reply, with nuance and rationale.",
   ].join("\n");
 
-  const input = JSON.stringify(
-    {
-      appearance: appearanceResult,
-      personality: personalityResult,
-      goal: "짧게 말할 수 있는 최종 이상형 정의 만들기",
-    },
-    null,
-    2
-  );
+  const input = [
+    "Respond in valid json only.",
+    JSON.stringify(
+      {
+        appearance: appearanceResult,
+        personality: personalityResult,
+        goal: "짧게 말할 수 있는 최종 이상형 정의 만들기",
+      },
+      null,
+      2
+    ),
+  ].join("\n");
 
   const responseJson = await callOpenAI({
     model,
@@ -623,6 +697,7 @@ function buildPortraitPrompt({ synthesisResult, appearanceResult, personalityRes
     `Appearance cues: ${appearanceKeywords || "분위기 있는 얼굴, 또렷한 선, 깊은 눈빛"}`,
     `Personality cues translated visually: ${personalityKeywords || "유머감각, 온기, 무게감"}`,
     `Editorial direction: ${synthesisResult?.headline || synthesisResult?.summary || "겉은 분위기, 대화는 온기"}`,
+    "Blend the references as overlapping inspiration for one coherent original face, while keeping the person clearly fictional and unified",
     "Constraints: original person only, not an exact likeness of any named celebrity, no collage, no face-splitting, no double exposure, no duplicate features, no extra people, no text, no logo, no watermark",
     "Avoid: cartoon, CGI look, plastic skin, exaggerated beauty filter, celebrity clone, distorted anatomy",
   ].join("\n");
