@@ -358,13 +358,31 @@ async function searchPeople(payload) {
     };
   }
 
-  const localResults = buildLocalSearchResults(query, category);
+  let localResults = buildLocalSearchResults(query, category);
   let externalResults = [];
 
   try {
     externalResults = await buildNaverSearchPreview(query);
   } catch {
     externalResults = [];
+  }
+
+  if (naverClientId && naverClientSecret && localResults.length > 0) {
+    localResults = await Promise.all(
+      localResults.map(async (item) => {
+        if (item.imageUrl) {
+          return item;
+        }
+        try {
+          return {
+            ...item,
+            imageUrl: (await fetchNaverImageThumbnail(item.name, item.role)) || "",
+          };
+        } catch {
+          return item;
+        }
+      })
+    );
   }
 
   const merged = [];
