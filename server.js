@@ -499,6 +499,99 @@ async function callOpenAI(payload) {
   return responseJson;
 }
 
+function analysisTextFormat() {
+  return {
+    format: {
+      type: "json_schema",
+      strict: true,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string" },
+          headline: { type: "string" },
+          keywords: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 4,
+            maxItems: 4,
+          },
+          summary: { type: "string" },
+          breakdown: {
+            type: "array",
+            minItems: 3,
+            maxItems: 3,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                label: { type: "string" },
+                text: { type: "string" },
+              },
+              required: ["label", "text"],
+            },
+          },
+          short_reply: { type: "string" },
+          natural_reply: { type: "string" },
+          deep_reply: { type: "string" },
+          confidence_note: { type: "string" },
+        },
+        required: [
+          "title",
+          "headline",
+          "keywords",
+          "summary",
+          "breakdown",
+          "short_reply",
+          "natural_reply",
+          "deep_reply",
+          "confidence_note",
+        ],
+      },
+    },
+  };
+}
+
+function synthesisTextFormat() {
+  return {
+    format: {
+      type: "json_schema",
+      strict: true,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string" },
+          headline: { type: "string" },
+          keywords: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 4,
+            maxItems: 4,
+          },
+          summary: { type: "string" },
+          combined_reply: { type: "string" },
+          short_reply: { type: "string" },
+          natural_reply: { type: "string" },
+          deep_reply: { type: "string" },
+          confidence_note: { type: "string" },
+        },
+        required: [
+          "title",
+          "headline",
+          "keywords",
+          "summary",
+          "combined_reply",
+          "short_reply",
+          "natural_reply",
+          "deep_reply",
+          "confidence_note",
+        ],
+      },
+    },
+  };
+}
+
 async function buildOpenAIAnalysis({ category, names }) {
   const instruction = [
     "You are an editorial ideal-type analyst for a Korean web app.",
@@ -547,11 +640,7 @@ async function buildOpenAIAnalysis({ category, names }) {
     reasoning: { effort: "medium" },
     store: false,
     max_output_tokens: 1200,
-    text: {
-      format: {
-        type: "json_object",
-      },
-    },
+    text: analysisTextFormat(),
   });
 
   const outputText = extractOutputText(responseJson);
@@ -609,11 +698,7 @@ async function buildOpenAISynthesis({ appearanceResult, personalityResult }) {
     reasoning: { effort: "medium" },
     store: false,
     max_output_tokens: 900,
-    text: {
-      format: {
-        type: "json_object",
-      },
-    },
+    text: synthesisTextFormat(),
   });
 
   const outputText = extractOutputText(responseJson);
