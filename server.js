@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 const port = Number(process.env.PORT || 3000);
-const model = process.env.OPENAI_MODEL || "gpt-5-mini";
+const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const imageModel = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5";
 const naverClientId = process.env.NAVER_SEARCH_CLIENT_ID || "";
 const naverClientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET || "";
@@ -738,6 +738,7 @@ async function buildAnalysis(payload) {
   try {
     return await buildOpenAIAnalysis({ category, names });
   } catch (error) {
+    console.error("AI analysis failed:", error);
     if (local) {
       return {
         ...local,
@@ -763,6 +764,7 @@ async function buildSynthesis(payload) {
   try {
     return await buildOpenAISynthesis({ appearanceResult, personalityResult });
   } catch (error) {
+    console.error("AI synthesis failed:", error);
     return {
       ...buildLocalSynthesis({ appearanceResult, personalityResult }),
       confidence_note: "AI 종합 요청이 실패해서 로컬 종합본으로 대체했습니다.",
