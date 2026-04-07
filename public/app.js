@@ -20,11 +20,13 @@ const state = {
     personality: null,
   },
   synthesis: null,
+  matchPack: null,
   loading: {
     appearance: false,
     personality: false,
     synthesis: false,
     image: false,
+    matchPack: false,
     search: false,
   },
   portrait: null,
@@ -58,6 +60,7 @@ function saveState() {
       selectionMeta: state.selectionMeta,
       results: state.results,
       synthesis: state.synthesis,
+      matchPack: state.matchPack,
     })
   );
 }
@@ -83,6 +86,9 @@ function loadState() {
     }
     if (parsed.synthesis) {
       state.synthesis = parsed.synthesis;
+    }
+    if (parsed.matchPack) {
+      state.matchPack = parsed.matchPack;
     }
   } catch {
     localStorage.removeItem("ideal-type-editorial-state");
@@ -146,6 +152,7 @@ function resetCurrentTab() {
   state.selectionMeta[state.currentTab] = {};
   state.results[state.currentTab] = null;
   state.synthesis = null;
+  state.matchPack = null;
   state.portrait = null;
   saveState();
   render();
@@ -185,6 +192,7 @@ function addNameToCurrentTab(name, meta = null) {
   }
   state.results[state.currentTab] = null;
   state.synthesis = null;
+  state.matchPack = null;
   state.portrait = null;
   saveState();
   render();
@@ -208,6 +216,7 @@ function togglePerson(name, meta = null) {
   }
   state.results[state.currentTab] = null;
   state.synthesis = null;
+  state.matchPack = null;
   state.portrait = null;
   saveState();
   render();
@@ -255,6 +264,7 @@ function removeFromCurrent(name) {
   clearSelectionMeta(state.currentTab, name);
   state.results[state.currentTab] = null;
   state.synthesis = null;
+  state.matchPack = null;
   state.portrait = null;
   saveState();
   render();
@@ -287,9 +297,13 @@ async function analyzeCurrentTab() {
     }
     state.results[state.currentTab] = result;
     state.synthesis = null;
+    state.matchPack = null;
     state.portrait = null;
     saveState();
     render();
+    if (state.results.appearance && state.results.personality) {
+      await synthesizeResults();
+    }
   } catch (error) {
     setToast(error.message);
   } finally {
@@ -319,6 +333,7 @@ async function synthesizeResults() {
       throw new Error(result.error || "종합 결과 생성에 실패했습니다.");
     }
     state.synthesis = result;
+    state.matchPack = null;
     state.portrait = null;
     saveState();
     render();
@@ -357,11 +372,47 @@ async function generatePortrait() {
       throw new Error(result.error || "이미지 생성에 실패했습니다.");
     }
     state.portrait = result;
+    state.matchPack = null;
+    saveState();
     render();
   } catch (error) {
     setToast(error.message);
   } finally {
     state.loading.image = false;
+    render();
+  }
+}
+
+async function generateMatchPack() {
+  if (!state.synthesis || !state.results.appearance || !state.results.personality) {
+    setToast("매칭 카드 생성을 위해 먼저 최종 종합 결과를 만들어 주세요.");
+    return;
+  }
+  state.loading.matchPack = true;
+  render();
+  try {
+    const response = await fetch("/api/match-pack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        synthesisResult: state.synthesis,
+        appearanceResult: state.results.appearance,
+        personalityResult: state.results.personality,
+        portraitResult: state.portrait,
+        selections: state.selections,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "매칭 카드 생성에 실패했습니다.");
+    }
+    state.matchPack = result;
+    saveState();
+    render();
+  } catch (error) {
+    setToast(error.message);
+  } finally {
+    state.loading.matchPack = false;
     render();
   }
 }
@@ -380,12 +431,15 @@ function renderSelectedChips() {
   if (current.length === 0) {
     return `<div class="empty-state">선택한 인물이 여기에 쌓입니다.</div>`;
   }
-  return `<div class="selected-wrap">
+  return `<div class="selected-list">
     ${current
       .map(
-        (name) => `<div class="selected-chip">
-          <span>${escapeHtml(name)}</span>
-          <button type="button" data-action="remove" data-name="${escapeHtml(name)}">×</button>
+        (name, index) => `<div class="selected-list-item">
+          <div class="selected-index">${index + 1}</div>
+          <div class="selected-meta">
+            <div class="selected-name">${escapeHtml(name)}</div>
+          </div>
+          <button type="button" class="selected-remove" data-action="remove" data-name="${escapeHtml(name)}">삭제</button>
         </div>`
       )
       .join("")}
@@ -420,12 +474,11 @@ function renderPeopleCards() {
             <div class="search-copy">
               <div class="search-name-line">
                 <span class="search-name">${escapeHtml(choiceName)}</span>
-                <span class="search-role">${escapeHtml(person.role)}</span>
               </div>
-              <div class="search-note">${escapeHtml(person.note)}</div>
-              <div class="card-tags">
+              ${person.note ? `<div class="search-note">${escapeHtml(person.note)}</div>` : ""}
+              ${tags.length > 0 ? `<div class="card-tags">
                 ${tags.map((tag) => `<span class="choice-tag">${escapeHtml(tag)}</span>`).join("")}
-              </div>
+              </div>` : ""}
             </div>
           </button>
           <button class="${active ? "secondary-button" : "primary-button"} search-pick-button" type="button" data-action="toggle" data-name="${escapeHtml(choiceName)}">
@@ -433,39 +486,6 @@ function renderPeopleCards() {
           </button>
         </div>`;
       })
-      .join("")}
-  </div>`;
-}
-
-function renderReplies(result, isSynthesis = false) {
-  const cards = [
-    {
-      label: "자연스럽게 말하면",
-      helper: "가장 자주 꺼내 쓰기 좋은 기본 문장",
-      value: result.natural_reply,
-      featured: true,
-    },
-    {
-      label: "한 줄 요약",
-      helper: "짧게 바로 답할 때",
-      value: result.short_reply,
-    },
-    {
-      label: "조금 더 설명하면",
-      helper: isSynthesis ? "취향의 결을 한 번 더 풀어서" : "이 취향이 왜 보이는지까지",
-      value: result.deep_reply,
-    },
-  ];
-  return `<div class="reply-grid">
-    ${cards
-      .map(
-        (card) => `<div class="reply-card ${card.featured ? "featured" : ""}">
-          <h4>${card.label}</h4>
-          <div class="reply-helper">${card.helper}</div>
-          <p>${escapeHtml(card.value)}</p>
-          <button type="button" data-action="copy" data-copy="${escapeHtml(card.value)}">문장 복사</button>
-        </div>`
-      )
       .join("")}
   </div>`;
 }
@@ -482,23 +502,86 @@ function renderResultCard(result, title) {
       </div>
       <div class="source-badge">${result.source === "openai" ? "AI analysis" : "local fallback"}</div>
     </div>
-    <p class="headline">${escapeHtml(result.headline)}</p>
-    <p class="summary">${escapeHtml(result.summary)}</p>
+    <div class="result-layout">
+      <div class="breakdowns vertical">
+        ${(result.breakdown || [])
+          .map(
+            (item) => `<div class="breakdown">
+              <div class="breakdown-label">${escapeHtml(item.label)}</div>
+              <div class="breakdown-copy">${escapeHtml(item.text)}</div>
+            </div>`
+          )
+          .join("")}
+      </div>
+      <div class="result-narrative">
+        <div class="result-narrative-title">너의 이상형의 느낌은</div>
+        <p class="headline">${escapeHtml(result.headline)}</p>
+        <p class="summary">${escapeHtml(result.summary)} ${escapeHtml(result.deep_reply || "")}</p>
+        <div class="summary-line">
+          <div class="summary-line-label">한 줄 요약</div>
+          <p>${escapeHtml(result.short_reply)}</p>
+        </div>
+      </div>
+    </div>
     <div class="keyword-row">
       ${(result.keywords || []).map((keyword) => `<span class="keyword">${escapeHtml(keyword)}</span>`).join("")}
     </div>
-    <div class="breakdowns">
-      ${(result.breakdown || [])
-        .map(
-          (item) => `<div class="breakdown">
-            <div class="breakdown-label">${escapeHtml(item.label)}</div>
-            <div class="breakdown-copy">${escapeHtml(item.text)}</div>
-          </div>`
-        )
-        .join("")}
-    </div>
-    ${renderReplies(result)}
     <div class="confidence-note">${escapeHtml(result.confidence_note || "")}</div>
+  </section>`;
+}
+
+function renderNextStepCard() {
+  const currentResult = state.results[state.currentTab];
+  const otherTab = state.currentTab === "appearance" ? "personality" : "appearance";
+  const otherLabel = otherTab === "appearance" ? "외적 이상형 분석" : "성격 이상형 분석";
+  if (!currentResult || (state.results.appearance && state.results.personality)) {
+    return "";
+  }
+  return `<section class="panel next-step-panel">
+    <div class="next-step-copy">
+      <div class="result-narrative-title">Next Step</div>
+      <h3>${otherLabel} 이어서 하기</h3>
+      <p>지금 결과는 정리됐습니다. 반대 카테고리도 분석하면 최종 종합 결과와 이미지 생성 단계가 바로 열립니다.</p>
+    </div>
+    <button type="button" class="primary-button" data-action="switch-next" data-tab="${otherTab}">${otherLabel}</button>
+  </section>`;
+}
+
+function renderMatchPackCard() {
+  if (!state.matchPack) {
+    return "";
+  }
+  return `<section class="match-pack-card">
+    <div class="match-pack-head">
+      <div>
+        <div class="result-narrative-title">Curator Match Pack</div>
+        <h3>${escapeHtml(state.matchPack.title)}</h3>
+      </div>
+      <div class="source-badge">${state.matchPack.source === "openai" ? "AI match pack" : "local pack"}</div>
+    </div>
+    <div class="match-pack-grid">
+      <div class="match-pack-block">
+        <div class="summary-line-label">한 줄 소개</div>
+        <p>${escapeHtml(state.matchPack.intro_line)}</p>
+      </div>
+      <div class="match-pack-block">
+        <div class="summary-line-label">잘 맞는 상대</div>
+        <p>${escapeHtml(state.matchPack.who_you_match_well_with)}</p>
+      </div>
+      <div class="match-pack-block">
+        <div class="summary-line-label">큐레이터 메모</div>
+        <p>${escapeHtml(state.matchPack.curator_note)}</p>
+      </div>
+      <div class="match-pack-block">
+        <div class="summary-line-label">오픈카톡 소개글</div>
+        <p>${escapeHtml(state.matchPack.openchat_post)}</p>
+      </div>
+    </div>
+    <div class="match-pack-actions">
+      <button type="button" class="secondary-button" data-action="copy" data-copy="${escapeHtml(state.matchPack.intro_line)}">한 줄 소개 복사</button>
+      <button type="button" class="secondary-button" data-action="copy" data-copy="${escapeHtml(state.matchPack.openchat_post)}">오픈카톡 소개글 복사</button>
+      <button type="button" class="secondary-button" data-action="copy" data-copy="${escapeHtml(state.matchPack.curator_note)}">큐레이터 메모 복사</button>
+    </div>
   </section>`;
 }
 
@@ -514,23 +597,38 @@ function renderSynthesisCard(result) {
       </div>
       <div class="source-badge">${result.source === "openai" ? "AI synthesis" : "local fallback"}</div>
     </div>
-    <p class="headline">${escapeHtml(result.headline)}</p>
-    <p class="summary">${escapeHtml(result.summary)}</p>
+    <div class="result-layout synthesis-layout">
+      <div class="result-narrative">
+        <div class="result-narrative-title">너의 이상형의 느낌은</div>
+        <p class="headline">${escapeHtml(result.headline)}</p>
+        <p class="summary">${escapeHtml(result.summary)} ${escapeHtml(result.deep_reply || "")}</p>
+        <div class="summary-line">
+          <div class="summary-line-label">한 줄 요약</div>
+          <p>${escapeHtml(result.short_reply)}</p>
+        </div>
+      </div>
+      <div class="lead-reply-card">
+        <div class="lead-reply-kicker">대표 문장</div>
+        <p>${escapeHtml(result.combined_reply)}</p>
+        <button type="button" data-action="copy" data-copy="${escapeHtml(result.combined_reply)}">문장 복사</button>
+      </div>
+    </div>
     <div class="keyword-row">
       ${(result.keywords || []).map((keyword) => `<span class="keyword">${escapeHtml(keyword)}</span>`).join("")}
     </div>
-    <div class="lead-reply-card">
-      <div class="lead-reply-kicker">대표 문장</div>
-      <p>${escapeHtml(result.combined_reply)}</p>
-      <button type="button" data-action="copy" data-copy="${escapeHtml(result.combined_reply)}">문장 복사</button>
-    </div>
-    ${renderReplies(result, true)}
     <div class="confidence-note">${escapeHtml(result.confidence_note || "")}</div>
-    <div class="image-actions">
-      <button type="button" class="primary-button" data-action="generate-image" ${state.supportsImageGeneration ? "" : "disabled"}>
-        ${state.loading.image ? `<span class="loader"></span>` : "이상형 이미지 그리기"}
-      </button>
-      ${!state.supportsImageGeneration ? `<button type="button" class="ghost-button" disabled>OPENAI_API_KEY 필요</button>` : ""}
+    <div class="image-step-card">
+      <div class="image-step-copy">
+        <div class="result-narrative-title">Step 03</div>
+        <h3>이미지 생성하기</h3>
+        <p>지금까지 분석한 외모 결, 피지컬 무드, 성격 인상을 한 장의 실사형 이상형 이미지로 묶습니다.</p>
+      </div>
+      <div class="image-actions">
+        <button type="button" class="primary-button" data-action="generate-image" ${state.supportsImageGeneration ? "" : "disabled"}>
+          ${state.loading.image ? `<span class="loader"></span>` : "이상형 이미지 그리기"}
+        </button>
+        ${!state.supportsImageGeneration ? `<button type="button" class="ghost-button" disabled>OPENAI_API_KEY 필요</button>` : ""}
+      </div>
     </div>
     ${
       state.portrait
@@ -552,6 +650,21 @@ function renderSynthesisCard(result) {
                 <p>${escapeHtml(state.portrait.model || "")}</p>
               </div>
             </div>
+          </div>
+          <div class="match-pack-stage">
+            <div class="image-step-card compact">
+              <div class="image-step-copy">
+                <div class="result-narrative-title">Monetization MVP</div>
+                <h3>매칭 운영용 카드 만들기</h3>
+                <p>생성된 얼굴 이미지와 성격 결을 바탕으로 수동 소개팅, 오픈카톡 모집, 큐레이터 메모에 바로 쓸 수 있는 운영용 문구를 만듭니다.</p>
+              </div>
+              <div class="image-actions">
+                <button type="button" class="primary-button" data-action="generate-match-pack">
+                  ${state.loading.matchPack ? `<span class="loader"></span>` : "매칭 카드 만들기"}
+                </button>
+              </div>
+            </div>
+            ${renderMatchPackCard()}
           </div>`
         : ""
     }
@@ -673,31 +786,36 @@ function render() {
                 </button>
               </div>
             </div>
-          </div>
-        </section>
 
-        <section class="results">
-          ${renderResultCard(currentResult, stepTwoLabel)}
-          ${
-            bothDone
-              ? `<section class="panel">
-                  <div class="control-header">
-                    <div>
-                      <div class="section-title">최종 종합</div>
-                      <div class="section-caption">외적 이상형과 성격 이상형을 합쳐 마지막 설명과 이미지 생성 단계까지 이어집니다.</div>
-                    </div>
-                    <button type="button" class="primary-button" data-action="synthesize">
-                      ${state.loading.synthesis ? `<span class="loader"></span>` : "최종 종합 만들기"}
-                    </button>
-                  </div>
-                  ${
-                    state.synthesis
-                      ? renderSynthesisCard(state.synthesis)
-                      : `<div class="empty-state">외적 결과와 성격 결과는 준비됐습니다. 위 버튼으로 최종 종합을 생성하세요.</div>`
-                  }
-                </section>`
-              : ""
-          }
+            <div class="studio-results">
+              ${renderResultCard(currentResult, stepTwoLabel)}
+              ${renderNextStepCard()}
+              ${
+                bothDone
+                  ? `<section class="panel inline-synthesis-panel">
+                      <div class="control-header">
+                        <div>
+                          <div class="section-title">최종 종합</div>
+                          <div class="section-caption">두 카테고리가 모두 끝나면 최종 문장을 정리하고 바로 이미지 생성 단계로 이어집니다.</div>
+                        </div>
+                        ${
+                          state.synthesis
+                            ? `<span class="meta-chip"><strong>Ready</strong> 이미지 생성 가능</span>`
+                            : `<button type="button" class="primary-button" data-action="synthesize">
+                                ${state.loading.synthesis ? `<span class="loader"></span>` : "최종 종합 만들기"}
+                              </button>`
+                        }
+                      </div>
+                      ${
+                        state.synthesis
+                          ? renderSynthesisCard(state.synthesis)
+                          : `<div class="empty-state">${state.loading.synthesis ? "최종 종합을 만드는 중입니다." : "외적 결과와 성격 결과가 준비됐습니다. 최종 종합을 만든 뒤 바로 이미지 생성하기로 넘어갈 수 있습니다."}</div>`
+                      }
+                    </section>`
+                  : ""
+              }
+            </div>
+          </div>
         </section>
       </main>
 
@@ -780,6 +898,18 @@ function bindEvents() {
   app.querySelector("[data-action='generate-image']")?.addEventListener("click", () => {
     state.keepSearchFocus = false;
     generatePortrait();
+  });
+  app.querySelector("[data-action='generate-match-pack']")?.addEventListener("click", () => {
+    state.keepSearchFocus = false;
+    generateMatchPack();
+  });
+  app.querySelector("[data-action='switch-next']")?.addEventListener("click", (event) => {
+    state.keepSearchFocus = false;
+    state.currentTab = event.currentTarget.dataset.tab;
+    state.search = "";
+    state.searchResults = [];
+    saveState();
+    render();
   });
 
   app.querySelectorAll("[data-action='copy']").forEach((button) => {

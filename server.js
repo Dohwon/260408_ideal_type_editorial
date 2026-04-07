@@ -62,6 +62,8 @@ const personDescriptionKeywords = [
   "드라마",
   "대한민국",
 ];
+const rolePrefixPattern =
+  /^(대한민국\s*)?(영화배우|드라마배우|배우|가수|모델|방송인|코미디언|개그맨|개그우먼|탤런트|아나운서|작곡가|뮤지션|아이돌|래퍼|랩퍼)\s*/;
 
 function normalizeName(value) {
   return String(value || "")
@@ -171,6 +173,53 @@ function shortDescriptionLabel(value) {
     .trim();
 }
 
+function extractPersonName(rawTitle) {
+  return stripHtmlTags(rawTitle)
+    .replace(/\([^)]*\)/g, "")
+    .replace(rolePrefixPattern, "")
+    .replace(/\s*[-:|].*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanCandidateName(rawTitle, query) {
+  const extracted = extractPersonName(rawTitle);
+  return extracted || String(query || "").trim();
+}
+
+function inferPersonRole(text) {
+  const source = stripHtmlTags(text);
+  if (/영화배우|드라마배우|배우|탤런트/.test(source)) {
+    return "배우";
+  }
+  if (/가수|아이돌|뮤지션|작곡가|래퍼|랩퍼/.test(source)) {
+    return "가수";
+  }
+  if (/모델/.test(source)) {
+    return "모델";
+  }
+  if (/방송인|아나운서|코미디언|개그맨|개그우먼/.test(source)) {
+    return "방송인";
+  }
+  if (/감독/.test(source)) {
+    return "감독";
+  }
+  if (/운동선수|축구선수|야구선수|농구선수|피겨/.test(source)) {
+    return "운동선수";
+  }
+  return "인물";
+}
+
+function descriptionHasAlias(description, query) {
+  const cleanedDescription = stripHtmlTags(description);
+  const normalizedDescription = normalizeName(cleanedDescription);
+  const queryKey = normalizeName(query);
+  if (!queryKey || !normalizedDescription.includes(queryKey)) {
+    return false;
+  }
+  return /(본명|예명|활동명|이명|출생명)/.test(cleanedDescription);
+}
+
 function buildUniqueSelectionName(name, description, seenKeys) {
   let candidate = String(name || "").trim() || "이름 미상";
   const descriptionLabel = shortDescriptionLabel(description);
@@ -212,16 +261,33 @@ function buildLocalSearchResults(query, category) {
       name: person.name,
       selectionName: person.name,
       role: person.role,
-      note: person.note,
+      note: person.role,
       imageUrl: "",
       source: "local",
       isPersonCandidate: true,
     }));
 }
 
-function looksLikePersonEntry(item) {
-  const combined = `${stripHtmlTags(item?.title)} ${stripHtmlTags(item?.description)}`.toLowerCase();
-  return personDescriptionKeywords.some((keyword) => combined.includes(keyword.toLowerCase()));
+function looksLikePersonEntry(item, query) {
+  const title = stripHtmlTags(item?.title);
+  const description = stripHtmlTags(item?.description);
+  const combined = `${title} ${description}`.toLowerCase();
+  const queryKey = normalizeName(query);
+  const extractedName = extractPersonName(title);
+  const extractedNameKey = normalizeName(extractedName);
+  const exactTitleMatch = queryKey ? extractedNameKey === queryKey : false;
+  const aliasMatch = descriptionHasAlias(description, query);
+  return (exactTitleMatch || aliasMatch) && personDescriptionKeywords.some((keyword) => combined.includes(keyword.toLowerCase()));
+}
+
+async function fetchNaverImageThumbnail(query, roleHint) {
+  const imageQuery = roleHint && roleHint !== "인물" ? `${query} ${roleHint} 프로필` : `${query} 인물 프로필`;
+  const imageUrl = `https://openapi.naver.com/v1/search/image?query=${encodeURIComponent(
+    imageQuery
+  )}&display=1&start=1&sort=sim&filter=medium`;
+  const payload = await fetchNaverSearch(imageUrl);
+  const first = Array.isArray(payload?.items) ? payload.items[0] : null;
+  return first?.thumbnail || first?.link || "";
 }
 
 async function fetchNaverSearch(url) {
@@ -248,23 +314,36 @@ async function buildNaverSearchPreview(query) {
   const payload = await fetchNaverSearch(encyclopediaUrl);
   const items = Array.isArray(payload?.items) ? payload.items : [];
   const seenKeys = new Set();
-  const encyclopediaResults = items
-    .filter((item) => looksLikePersonEntry(item))
+  const encyclopediaSeed = items
+    .filter((item) => looksLikePersonEntry(item, query))
     .map((item, index) => {
-      const title = stripHtmlTags(item.title) || query;
-      const description = stripHtmlTags(item.description) || "네이버 백과사전 인물 결과";
+      const title = cleanCandidateName(item.title, query) || query;
+      const role = inferPersonRole(`${item.title || ""} ${item.description || ""}`);
       return {
         id: `naver-encyc:${query}:${index}`,
         name: title,
-        selectionName: buildUniqueSelectionName(title, description, seenKeys),
-        role: "네이버 백과사전",
-        note: description,
-        imageUrl: item.thumbnail || "",
+        selectionName: buildUniqueSelectionName(title, role, seenKeys),
+        role,
+        note: role,
+        imageUrl: "",
         source: "naver",
         isPersonCandidate: true,
       };
     })
     .filter((item) => item.name);
+
+  const encyclopediaResults = await Promise.all(
+    encyclopediaSeed.map(async (item) => {
+      try {
+        return {
+          ...item,
+          imageUrl: (await fetchNaverImageThumbnail(item.name, item.role)) || item.imageUrl,
+        };
+      } catch {
+        return item;
+      }
+    })
+  );
 
   return encyclopediaResults;
 }
@@ -420,23 +499,23 @@ function buildLocalBreakdown(category, names, topTagIds) {
   if (category === "appearance") {
     return [
       {
-        label: "공통 분위기",
-        text: `${names.join(", ")}을 묶으면 화사하게 예쁜 얼굴보다는 결이 또렷하고 무드가 진한 쪽으로 선호가 모입니다.`,
+        label: "외모",
+        text: `${names.join(", ")}을 묶으면 화사하고 말끔한 얼굴보다 얼굴선과 이목구비 윤곽이 또렷한 쪽으로 취향이 모입니다.`,
       },
       {
-        label: "디테일",
-        text: `${descriptors.join(", ")} 쪽의 결이 반복됩니다.`,
+        label: "피지컬 무드",
+        text: `길고 시원한 비율, 탄탄한 체형, 정장이나 셔츠가 잘 받는 어른스러운 실루엣 같은 결이 반복됩니다.`,
       },
       {
-        label: "한 줄 정의",
-        text: `즉, ${labels.slice(0, 2).join(" + ")} 쪽이 당신의 외적 취향 핵심입니다.`,
+        label: "대중적 인상",
+        text: `예쁘다기보다 존재감 있고 분위기로 기억되는 타입, 즉 ${labels.slice(0, 2).join(" + ")} 쪽이 외적 취향 핵심입니다.`,
       },
     ];
   }
 
   return [
     {
-      label: "대화감",
+      label: "대화 톤",
       text: `${names.join(", ")}을 묶으면 재치가 있는데 얄팍하지 않은 사람을 좋아하는 패턴이 뚜렷합니다.`,
     },
     {
@@ -444,8 +523,8 @@ function buildLocalBreakdown(category, names, topTagIds) {
       text: `${descriptors.join(", ")} 쪽의 성향이 반복돼서, 같이 있을 때 편안하지만 심심하지 않은 타입이 보입니다.`,
     },
     {
-      label: "한 줄 정의",
-      text: `즉, ${labels.slice(0, 2).join(" + ")} 조합이 당신의 성격 이상형 핵심입니다.`,
+      label: "대중적 인상",
+      text: `웃기기만 한 사람보다 유쾌함 안에 무게감과 신뢰가 있는 타입, 즉 ${labels.slice(0, 2).join(" + ")} 조합이 핵심입니다.`,
     },
   ];
 }
@@ -485,7 +564,7 @@ function buildLocalAnalysis({ category, names }) {
     keywords,
     summary:
       category === "appearance"
-        ? `선택한 인물들을 보면 정답형 미남/미인보다는 분위기와 선이 살아 있는 얼굴에 반응합니다. ${keywords.slice(0, 3).join(", ")} 같은 요소가 반복돼서 차분하면서도 존재감 있는 인상을 선호하는 쪽에 가깝습니다.`
+        ? `선택한 인물들을 보면 얼굴 윤곽이 흐릿하고 순한 상보다, 눈매가 깊고 얼굴선이 길게 빠진 타입에 반응합니다. ${keywords.slice(0, 3).join(", ")} 같은 요소가 반복돼서 차분하지만 존재감이 분명한 인상을 선호하는 쪽에 가깝습니다.`
         : `선택한 인물들을 보면 말의 재미와 사람의 온도를 함께 보는 편입니다. ${keywords.slice(0, 3).join(", ")} 같은 요소가 반복돼서 웃기기만 한 사람이 아니라 편안하고 믿음 가는 타입에 더 끌립니다.`,
     breakdown,
     short_reply: shortReply,
@@ -512,6 +591,28 @@ function buildLocalSynthesis({ appearanceResult, personalityResult }) {
     natural_reply: `나는 외적으로는 분위기 있고 차분한 스타일을 좋아하고, 성격은 유쾌하고 다정한데 자기 일도 잘하는 사람이 좋더라.`,
     deep_reply: `나는 첫인상은 차분하고 존재감 있는 스타일인데, 가까워질수록 재밌고 따뜻한 사람이 좋더라. 너무 가볍기만 한 사람보다 유머는 있어도 기본적으로 믿음이 가고, 자기 일도 잘하는 타입에 더 끌린다.`,
     confidence_note: "외적 분석과 성격 분석 결과를 합쳐 정리한 로컬 종합본입니다.",
+  };
+}
+
+function matchPackTextFormat() {
+  return {
+    format: {
+      type: "json_schema",
+      name: "ideal_type_match_pack",
+      strict: true,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string" },
+          intro_line: { type: "string" },
+          who_you_match_well_with: { type: "string" },
+          curator_note: { type: "string" },
+          openchat_post: { type: "string" },
+        },
+        required: ["title", "intro_line", "who_you_match_well_with", "curator_note", "openchat_post"],
+      },
+    },
   };
 }
 
@@ -679,9 +780,12 @@ async function buildOpenAIAnalysis({ category, names }) {
     "- personality이면 인터뷰 톤, 방송/작품에서 반복되는 이미지, 대중적 인상 중심으로 본다.",
     "- 결과는 너무 길지 않게, 하지만 충분히 설득력 있게 정리한다.",
     "- breakdown 각 항목은 2문장 이내로 압축한다.",
+    "- appearance이면 breakdown label은 반드시 '외모', '피지컬 무드', '대중적 인상' 순서로 쓴다.",
+    "- personality이면 breakdown label은 반드시 '대화 톤', '관계감', '대중적 인상' 순서로 쓴다.",
     "- short_reply, natural_reply, deep_reply는 서로 거의 같은 문장이 되면 안 된다.",
     "- natural_reply는 사용자가 실제로 가장 자주 복사해 말할 문장처럼 자연스러워야 한다.",
     "- deep_reply는 short_reply의 단순 확장이 아니라 취향의 결을 한 번 더 풀어 설명해야 한다.",
+    "- '매력적이다', '분위기 있다' 같은 말만 반복하지 말고 무엇이 어떻게 비슷한지 구체적으로 적는다.",
   ].join("\n");
 
   const responseJson = await callOpenAI({
@@ -758,6 +862,80 @@ async function buildOpenAISynthesis({ appearanceResult, personalityResult }) {
     store: false,
     max_output_tokens: 900,
     text: synthesisTextFormat(),
+  });
+
+  const outputText = extractOutputText(responseJson);
+  return {
+    source: "openai",
+    ...JSON.parse(outputText),
+  };
+}
+
+function buildLocalMatchPack({ synthesisResult, appearanceResult, personalityResult }) {
+  return {
+    source: "local",
+    title: "큐레이터 매칭 카드",
+    intro_line: synthesisResult?.combined_reply || synthesisResult?.short_reply || "차분한 분위기에 유쾌한 온기가 있는 사람을 좋아합니다.",
+    who_you_match_well_with: `외적으로는 ${appearanceResult?.title || "분위기 있는 얼굴"} 쪽이고, 성격은 ${personalityResult?.title || "유머와 온기가 있는 사람"} 쪽인 상대와 잘 맞습니다.`,
+    curator_note:
+      "첫인상은 차분하고 안정감 있는 쪽을 선호하지만, 실제 관계에서는 대화가 재밌고 온기가 있는 사람에게 더 반응합니다. 소개팅 매칭 시 겉보기 이미지와 대화 텐션이 모두 살아 있는 상대를 우선 연결하는 편이 좋습니다.",
+    openchat_post:
+      "차분하고 분위기 있는 외모에, 대화는 재밌고 다정한 스타일을 좋아하는 분입니다. 너무 가볍기보다 믿음직하고 센스 있는 상대를 찾고 있어요.",
+  };
+}
+
+async function buildOpenAIMatchPack({ synthesisResult, appearanceResult, personalityResult, portraitResult, selections }) {
+  const instruction = [
+    "You are building a curator-ready dating match pack for a Korean MVP.",
+    "Return valid JSON only.",
+    "The word JSON must appear in your instructions, and your output must be valid JSON.",
+    "Write all copy in Korean.",
+    "The pack will be used by a human operator for open chat recruiting and manual blind-date matching.",
+    "Keep it concrete, attractive, and operational.",
+    "Do not mention the names of celebrities in the output.",
+    "Target schema:",
+    "{",
+    '  "title": string,',
+    '  "intro_line": string,',
+    '  "who_you_match_well_with": string,',
+    '  "curator_note": string,',
+    '  "openchat_post": string',
+    "}",
+  ].join("\n");
+
+  const inputText = [
+    "Respond in valid json only.",
+    JSON.stringify(
+      {
+        synthesis: synthesisResult,
+        appearance: appearanceResult,
+        personality: personalityResult,
+        portrait: portraitResult
+          ? {
+              promptSummary: portraitResult.promptSummary,
+              note: portraitResult.note,
+            }
+          : null,
+        selections,
+        useCase: "수동 소개팅 매칭, 오픈카톡 모집, 큐레이터 내부 운영 메모",
+      },
+      null,
+      2
+    ),
+  ].join("\n");
+
+  const responseJson = await callOpenAI({
+    model,
+    instructions: instruction,
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: inputText }],
+      },
+    ],
+    store: false,
+    max_output_tokens: 700,
+    text: matchPackTextFormat(),
   });
 
   const outputText = extractOutputText(responseJson);
@@ -909,6 +1087,33 @@ async function generateIdealPortrait(payload) {
   };
 }
 
+async function buildMatchPack(payload) {
+  const synthesisResult = payload?.synthesisResult;
+  const appearanceResult = payload?.appearanceResult;
+  const personalityResult = payload?.personalityResult;
+
+  if (!synthesisResult || !appearanceResult || !personalityResult) {
+    throw new Error("매칭 카드 생성을 위해 외적 결과, 성격 결과, 최종 종합 결과가 모두 필요합니다.");
+  }
+
+  const local = buildLocalMatchPack({
+    synthesisResult,
+    appearanceResult,
+    personalityResult,
+  });
+
+  if (!process.env.OPENAI_API_KEY) {
+    return local;
+  }
+
+  try {
+    return await buildOpenAIMatchPack(payload);
+  } catch (error) {
+    console.error("AI match pack failed:", error);
+    return local;
+  }
+}
+
 async function serveStatic(request, response) {
   const requestedUrl = new URL(request.url, `http://${request.headers.host}`);
   const pathname = requestedUrl.pathname === "/" ? "/index.html" : requestedUrl.pathname;
@@ -979,6 +1184,12 @@ const server = createServer(async (request, response) => {
     if (method === "POST" && pathname === "/api/generate-image") {
       const payload = await readJsonBody(request);
       const result = await generateIdealPortrait(payload);
+      return json(response, 200, result);
+    }
+
+    if (method === "POST" && pathname === "/api/match-pack") {
+      const payload = await readJsonBody(request);
+      const result = await buildMatchPack(payload);
       return json(response, 200, result);
     }
 
