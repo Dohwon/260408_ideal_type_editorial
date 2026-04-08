@@ -148,8 +148,34 @@ function labelForOption(options, value) {
   return match?.label || String(value || "");
 }
 
+function labelsForOptions(options, values) {
+  const ids = Array.isArray(values) ? values : [];
+  return ids.map((value) => labelForOption(options, value)).filter(Boolean);
+}
+
 function normalizePhone(value) {
   return String(value || "").replace(/\D+/g, "").trim();
+}
+
+function sanitizeOptionIds(value, options) {
+  const allowed = new Set((Array.isArray(options) ? options : []).map((item) => item.id));
+  const source = Array.isArray(value) ? value : [value];
+  return [...new Set(source.map((item) => String(item || "").trim()).filter((item) => allowed.has(item)))];
+}
+
+function readSubmissionTagList(payload, pluralKey, singularKey, options) {
+  const pluralValue = payload?.[pluralKey];
+  if (Array.isArray(pluralValue)) {
+    return sanitizeOptionIds(pluralValue, options);
+  }
+  return sanitizeOptionIds(payload?.[singularKey], options);
+}
+
+function submissionTagList(submission, pluralKey, singularKey) {
+  if (Array.isArray(submission?.[pluralKey]) && submission[pluralKey].length > 0) {
+    return sanitizeCandidateIds(submission[pluralKey]);
+  }
+  return sanitizeCandidateIds(submission?.[singularKey]);
 }
 
 function decodeBasicAuthHeader(headerValue) {
@@ -369,6 +395,7 @@ function buildLocalSearchResults(query, category) {
     .filter((person) => {
       const pool = [
         person.name,
+        ...(person.aliases || []),
         person.role,
         person.note,
         ...(category === "appearance" ? person.appearanceTags : person.personalityTags),
@@ -403,13 +430,19 @@ function looksLikePersonEntry(item, query) {
 }
 
 async function fetchNaverImageThumbnail(query, roleHint) {
-  const imageQuery = roleHint && roleHint !== "인물" ? `${query} ${roleHint} 프로필` : `${query} 인물 프로필`;
+  const imageQuery = roleHint && roleHint !== "인물" ? `"${query}" ${roleHint} 프로필` : `"${query}" 인물 프로필`;
   const imageUrl = `https://openapi.naver.com/v1/search/image?query=${encodeURIComponent(
     imageQuery
-  )}&display=1&start=1&sort=sim&filter=medium`;
+  )}&display=8&start=1&sort=sim&filter=medium`;
   const payload = await fetchNaverSearch(imageUrl);
-  const first = Array.isArray(payload?.items) ? payload.items[0] : null;
-  return first?.thumbnail || first?.link || "";
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const queryKey = normalizeName(query);
+  const best =
+    items.find((item) => {
+      const haystack = normalizeName(`${stripHtmlTags(item?.title)} ${item?.link} ${item?.thumbnail}`);
+      return queryKey && haystack.includes(queryKey);
+    }) || null;
+  return best?.thumbnail || best?.link || "";
 }
 
 async function fetchNaverSearch(url) {
@@ -509,7 +542,7 @@ async function searchPeople(payload) {
 
   const merged = [];
   const seen = new Set();
-  for (const item of [...externalResults, ...localResults]) {
+  for (const item of [...localResults, ...externalResults]) {
     const key = normalizeName(item.selectionName || item.name);
     if (!key || seen.has(key)) {
       continue;
@@ -1025,6 +1058,9 @@ function buildLocalMatchPack({ synthesisResult, appearanceResult, personalityRes
 }
 
 function summarizeSubmissionForAdmin(submission) {
+  const appearanceSelfTags = submissionTagList(submission, "appearanceSelfTags", "appearanceSelfTag");
+  const personalitySelfTags = submissionTagList(submission, "personalitySelfTags", "personalitySelfTag");
+  const appearanceOptions = matchCandidateOptions.appearanceByGender?.[submission.genderIdentity] || [];
   return {
     id: submission.id,
     createdAt: submission.createdAt,
@@ -1035,8 +1071,10 @@ function summarizeSubmissionForAdmin(submission) {
     desiredGender: submission.desiredGender || "",
     genderIdentityLabel: labelForOption(matchCandidateOptions.genderIdentity, submission.genderIdentity),
     desiredGenderLabel: labelForOption(matchCandidateOptions.desiredGender, submission.desiredGender),
-    appearanceSelfTag: submission.appearanceSelfTag || "",
-    personalitySelfTag: submission.personalitySelfTag || "",
+    appearanceSelfTags,
+    personalitySelfTags,
+    appearanceSelfTagsText: labelsForOptions(appearanceOptions, appearanceSelfTags).join(", "),
+    personalitySelfTagsText: labelsForOptions(matchCandidateOptions.personality, personalitySelfTags).join(", "),
     combinedReply: submission.combinedReply || "",
     synthesisTitle: submission.synthesisTitle || "",
     appearanceKeywords: submission.appearanceKeywords || [],
@@ -1140,8 +1178,14 @@ async function saveMatchSubmission(payload) {
   const consent = Boolean(payload?.consent);
   const genderIdentity = String(payload?.genderIdentity || "").trim();
   const desiredGender = String(payload?.desiredGender || "").trim();
-  const appearanceSelfTag = String(payload?.appearanceSelfTag || "").trim();
-  const personalitySelfTag = String(payload?.personalitySelfTag || "").trim();
+  const appearanceOptions = matchCandidateOptions.appearanceByGender?.[genderIdentity] || [];
+  const appearanceSelfTags = readSubmissionTagList(payload, "appearanceSelfTags", "appearanceSelfTag", appearanceOptions);
+  const personalitySelfTags = readSubmissionTagList(
+    payload,
+    "personalitySelfTags",
+    "personalitySelfTag",
+    matchCandidateOptions.personality
+  );
   const synthesisResult = payload?.synthesisResult || {};
   const appearanceResult = payload?.appearanceResult || {};
   const personalityResult = payload?.personalityResult || {};
@@ -1158,7 +1202,7 @@ async function saveMatchSubmission(payload) {
   if (!["woman", "man", "any"].includes(desiredGender)) {
     throw new Error("희망 상대 성별을 선택해 주세요.");
   }
-  if (!appearanceSelfTag || !personalitySelfTag) {
+  if (!appearanceSelfTags.length || !personalitySelfTags.length) {
     throw new Error("내 외모 분위기와 성격 분위기를 모두 선택해 주세요.");
   }
 
@@ -1174,8 +1218,10 @@ async function saveMatchSubmission(payload) {
     consent,
     genderIdentity,
     desiredGender,
-    appearanceSelfTag,
-    personalitySelfTag,
+    appearanceSelfTag: appearanceSelfTags[0] || "",
+    personalitySelfTag: personalitySelfTags[0] || "",
+    appearanceSelfTags,
+    personalitySelfTags,
     synthesisTitle: synthesisResult?.title || "",
     combinedReply: synthesisResult?.combined_reply || synthesisResult?.short_reply || "",
     appearanceKeywords: appearanceResult?.keywords || [],

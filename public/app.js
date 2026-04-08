@@ -42,8 +42,8 @@ const state = {
     consent: false,
     genderIdentity: "woman",
     desiredGender: "man",
-    appearanceSelfTag: "",
-    personalitySelfTag: "",
+    appearanceSelfTags: [],
+    personalitySelfTags: [],
   },
   toast: "",
   keepSearchFocus: false,
@@ -75,58 +75,11 @@ function renderKeepingScroll() {
 }
 
 function saveState() {
-  localStorage.setItem(
-    "ideal-type-editorial-state",
-    JSON.stringify({
-      currentTab: state.currentTab,
-      selections: state.selections,
-      selectionMeta: state.selectionMeta,
-      results: state.results,
-      synthesis: state.synthesis,
-      matchPack: state.matchPack,
-      matchSubmission: state.matchSubmission,
-      matchForm: state.matchForm,
-    })
-  );
+  return;
 }
 
 function loadState() {
-  try {
-    const raw = localStorage.getItem("ideal-type-editorial-state");
-    if (!raw) {
-      return;
-    }
-    const parsed = JSON.parse(raw);
-    if (parsed.currentTab) {
-      state.currentTab = parsed.currentTab;
-    }
-    if (parsed.selections) {
-      state.selections = parsed.selections;
-    }
-    if (parsed.selectionMeta) {
-      state.selectionMeta = parsed.selectionMeta;
-    }
-    if (parsed.results) {
-      state.results = parsed.results;
-    }
-    if (parsed.synthesis) {
-      state.synthesis = parsed.synthesis;
-    }
-    if (parsed.matchPack) {
-      state.matchPack = parsed.matchPack;
-    }
-    if (parsed.matchSubmission) {
-      state.matchSubmission = parsed.matchSubmission;
-    }
-    if (parsed.matchForm) {
-      state.matchForm = {
-        ...state.matchForm,
-        ...parsed.matchForm,
-      };
-    }
-  } catch {
-    localStorage.removeItem("ideal-type-editorial-state");
-  }
+  localStorage.removeItem("ideal-type-editorial-state");
 }
 
 function setToast(message) {
@@ -468,12 +421,12 @@ async function submitMatchApplication() {
     setToast("매칭 신청 전 최종 분석 결과를 먼저 만들어 주세요.");
     return;
   }
-  const { displayName, phone, consent, appearanceSelfTag, personalitySelfTag } = state.matchForm;
+  const { displayName, phone, consent, appearanceSelfTags, personalitySelfTags } = state.matchForm;
   if (!displayName.trim() || !phone.trim()) {
     setToast("이름 또는 닉네임과 전화번호를 입력해 주세요.");
     return;
   }
-  if (!appearanceSelfTag || !personalitySelfTag) {
+  if (!appearanceSelfTags.length || !personalitySelfTags.length) {
     setToast("내 외모 분위기와 성격 분위기를 모두 골라 주세요.");
     return;
   }
@@ -678,13 +631,13 @@ function renderMatchPackCard() {
 
 function renderSelfVibeOptions(kind) {
   const options = kind === "appearance" ? getAppearanceOptionsForMatchForm() : state.matchOptions.personality || [];
-  const selectedValue = state.matchForm[kind === "appearance" ? "appearanceSelfTag" : "personalitySelfTag"];
+  const selectedValues = state.matchForm[kind === "appearance" ? "appearanceSelfTags" : "personalitySelfTags"] || [];
   return `<div class="vibe-options">
     ${options
       .map(
         (option) => `<button
           type="button"
-          class="vibe-option ${selectedValue === option.id ? "active" : ""}"
+          class="vibe-option ${selectedValues.includes(option.id) ? "active" : ""}"
           data-action="select-vibe"
           data-kind="${kind}"
           data-value="${escapeHtml(option.id)}"
@@ -812,6 +765,7 @@ function renderSynthesisCard(result) {
         </button>
         ${!state.supportsImageGeneration ? `<button type="button" class="ghost-button" disabled>OPENAI_API_KEY 필요</button>` : ""}
       </div>
+      <div class="section-caption">이미지 생성은 보통 30초~3분 정도 걸립니다.</div>
     </div>
     ${
       state.portrait
@@ -893,7 +847,7 @@ function render() {
                 <div class="rail-number">3</div>
                 <div class="rail-copy">
                   <strong>${stepThreeLabel}</strong>
-                  <span>${state.portrait ? "생성 완료" : state.synthesis ? "지금 생성 가능" : "종합 결과 후 가능"}</span>
+                  <span>${state.portrait ? "생성 완료" : state.synthesis ? "지금 생성 가능 · 30초~3분" : "종합 결과 후 가능"}</span>
                 </div>
               </div>
               <div class="rail-step ${stageFourState}">
@@ -1100,9 +1054,21 @@ function bindEvents() {
       const kind = button.dataset.kind;
       const value = button.dataset.value;
       if (kind === "appearance") {
-        state.matchForm.appearanceSelfTag = value;
+        const current = new Set(state.matchForm.appearanceSelfTags || []);
+        if (current.has(value)) {
+          current.delete(value);
+        } else {
+          current.add(value);
+        }
+        state.matchForm.appearanceSelfTags = [...current];
       } else if (kind === "personality") {
-        state.matchForm.personalitySelfTag = value;
+        const current = new Set(state.matchForm.personalitySelfTags || []);
+        if (current.has(value)) {
+          current.delete(value);
+        } else {
+          current.add(value);
+        }
+        state.matchForm.personalitySelfTags = [...current];
       }
       saveState();
       renderKeepingScroll();
@@ -1123,7 +1089,7 @@ function bindEvents() {
   });
   app.querySelector("[data-role='match-gender-identity']")?.addEventListener("change", (event) => {
     state.matchForm.genderIdentity = event.target.value;
-    state.matchForm.appearanceSelfTag = "";
+    state.matchForm.appearanceSelfTags = [];
     saveState();
     renderKeepingScroll();
   });

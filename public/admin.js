@@ -108,7 +108,7 @@ function renderCandidateCheckboxes(current, kind) {
       .map(
         (candidate) => `<label class="candidate-item">
           <input type="checkbox" data-kind="${kind}" value="${escapeHtml(candidate.id)}" ${selectedSet.has(candidate.id) ? "checked" : ""} />
-          <span>${escapeHtml(candidate.displayName)} / ${escapeHtml(candidate.genderIdentityLabel || "-")} / ${escapeHtml(candidate.desiredGenderLabel || "-")} / ${escapeHtml(candidate.appearanceSelfTag || "-")} / ${escapeHtml(candidate.personalitySelfTag || "-")}</span>
+          <span>${escapeHtml(candidate.displayName)} / ${escapeHtml(candidate.genderIdentityLabel || "-")} / ${escapeHtml(candidate.desiredGenderLabel || "-")} / ${escapeHtml(candidate.appearanceSelfTagsText || "-")} / ${escapeHtml(candidate.personalitySelfTagsText || "-")}</span>
         </label>`
       )
       .join("")}
@@ -151,8 +151,8 @@ function renderDashboard() {
                 <span class="meta-chip"><strong>PHONE</strong> ${escapeHtml(submission.phone)}</span>
                 <span class="meta-chip"><strong>내 성별</strong> ${escapeHtml(submission.genderIdentityLabel || "-")}</span>
                 <span class="meta-chip"><strong>희망 상대</strong> ${escapeHtml(submission.desiredGenderLabel || "-")}</span>
-                <span class="meta-chip"><strong>외모</strong> ${escapeHtml(submission.appearanceSelfTag || "-")}</span>
-                <span class="meta-chip"><strong>성격</strong> ${escapeHtml(submission.personalitySelfTag || "-")}</span>
+                <span class="meta-chip"><strong>외모</strong> ${escapeHtml(submission.appearanceSelfTagsText || "-")}</span>
+                <span class="meta-chip"><strong>성격</strong> ${escapeHtml(submission.personalitySelfTagsText || "-")}</span>
               </div>
               <div class="admin-field">
                 <label>관리 상태</label>

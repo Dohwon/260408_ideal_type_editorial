@@ -136,6 +136,7 @@ export const curatedPeople = [
   {
     name: "정재형",
     role: "가수",
+    aliases: ["정재형 가수"],
     note: "감각과 소년성이 섞인 지적인 분위기",
     appearanceTags: ["smart_refined", "clear_clean", "adult_classic", "soft_glow", "presence"],
     personalityTags: ["sense", "taste", "professional", "humor", "warmth"],
@@ -185,6 +186,7 @@ export const curatedPeople = [
   {
     name: "아이유",
     role: "가수 · 배우",
+    aliases: ["이지은"],
     note: "작고 맑은 이미지에 지적인 정돈감이 있는 편",
     appearanceTags: ["clear_clean", "soft_glow", "smart_refined", "youthful_bright", "polished_pretty"],
     personalityTags: ["warmth", "thoughtful", "professional", "taste", "intellect"],
@@ -258,6 +260,22 @@ export const curatedPeople = [
     note: "밝고 단정한 인상에 오래 가는 신뢰감이 있는 타입",
     appearanceTags: ["clear_clean", "smart_refined", "youthful_bright", "soft_glow", "presence"],
     personalityTags: ["humor", "comfortable", "warmth", "professional", "sense"],
+  },
+  {
+    name: "딘딘",
+    role: "가수 · 방송인",
+    aliases: ["임철", "딘딘 가수", "딘딘 방송인"],
+    note: "재치 있는 입담과 생활형 친근함이 살아 있는 타입",
+    appearanceTags: ["youthful_bright", "clear_clean", "presence", "smart_refined", "soft_glow"],
+    personalityTags: ["humor", "playful", "comfortable", "candor", "sense"],
+  },
+  {
+    name: "산들",
+    role: "가수",
+    aliases: ["이정환", "B1A4 산들", "산들 가수"],
+    note: "맑고 부드러운 인상에 편안한 온기가 있는 타입",
+    appearanceTags: ["soft_glow", "clear_clean", "youthful_bright", "smart_refined", "presence"],
+    personalityTags: ["warmth", "comfortable", "humor", "thoughtful", "professional"],
   },
 ];
 
