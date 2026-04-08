@@ -1,6 +1,10 @@
 const state = {
   catalog: [],
   examplePacks: {},
+  matchOptions: {
+    appearance: [],
+    personality: [],
+  },
   supportsCustomAnalysis: false,
   supportsImageGeneration: false,
   supportsNaverSearch: false,
@@ -21,15 +25,24 @@ const state = {
   },
   synthesis: null,
   matchPack: null,
+  matchSubmission: null,
   loading: {
     appearance: false,
     personality: false,
     synthesis: false,
     image: false,
     matchPack: false,
+    submitMatch: false,
     search: false,
   },
   portrait: null,
+  matchForm: {
+    displayName: "",
+    phone: "",
+    consent: false,
+    appearanceSelfTag: "",
+    personalitySelfTag: "",
+  },
   toast: "",
   keepSearchFocus: false,
 };
@@ -61,6 +74,8 @@ function saveState() {
       results: state.results,
       synthesis: state.synthesis,
       matchPack: state.matchPack,
+      matchSubmission: state.matchSubmission,
+      matchForm: state.matchForm,
     })
   );
 }
@@ -89,6 +104,15 @@ function loadState() {
     }
     if (parsed.matchPack) {
       state.matchPack = parsed.matchPack;
+    }
+    if (parsed.matchSubmission) {
+      state.matchSubmission = parsed.matchSubmission;
+    }
+    if (parsed.matchForm) {
+      state.matchForm = {
+        ...state.matchForm,
+        ...parsed.matchForm,
+      };
     }
   } catch {
     localStorage.removeItem("ideal-type-editorial-state");
@@ -153,6 +177,7 @@ function resetCurrentTab() {
   state.results[state.currentTab] = null;
   state.synthesis = null;
   state.matchPack = null;
+  state.matchSubmission = null;
   state.portrait = null;
   saveState();
   render();
@@ -193,6 +218,7 @@ function addNameToCurrentTab(name, meta = null) {
   state.results[state.currentTab] = null;
   state.synthesis = null;
   state.matchPack = null;
+  state.matchSubmission = null;
   state.portrait = null;
   saveState();
   render();
@@ -217,6 +243,7 @@ function togglePerson(name, meta = null) {
   state.results[state.currentTab] = null;
   state.synthesis = null;
   state.matchPack = null;
+  state.matchSubmission = null;
   state.portrait = null;
   saveState();
   render();
@@ -265,6 +292,7 @@ function removeFromCurrent(name) {
   state.results[state.currentTab] = null;
   state.synthesis = null;
   state.matchPack = null;
+  state.matchSubmission = null;
   state.portrait = null;
   saveState();
   render();
@@ -298,6 +326,7 @@ async function analyzeCurrentTab() {
     state.results[state.currentTab] = result;
     state.synthesis = null;
     state.matchPack = null;
+    state.matchSubmission = null;
     state.portrait = null;
     saveState();
     render();
@@ -334,6 +363,7 @@ async function synthesizeResults() {
     }
     state.synthesis = result;
     state.matchPack = null;
+    state.matchSubmission = null;
     state.portrait = null;
     saveState();
     render();
@@ -373,6 +403,7 @@ async function generatePortrait() {
     }
     state.portrait = result;
     state.matchPack = null;
+    state.matchSubmission = null;
     saveState();
     render();
   } catch (error) {
@@ -413,6 +444,54 @@ async function generateMatchPack() {
     setToast(error.message);
   } finally {
     state.loading.matchPack = false;
+    render();
+  }
+}
+
+async function submitMatchApplication() {
+  if (!state.synthesis || !state.results.appearance || !state.results.personality) {
+    setToast("매칭 신청 전 최종 분석 결과를 먼저 만들어 주세요.");
+    return;
+  }
+  const { displayName, phone, consent, appearanceSelfTag, personalitySelfTag } = state.matchForm;
+  if (!displayName.trim() || !phone.trim()) {
+    setToast("이름 또는 닉네임과 전화번호를 입력해 주세요.");
+    return;
+  }
+  if (!appearanceSelfTag || !personalitySelfTag) {
+    setToast("내 외모 분위기와 성격 분위기를 모두 골라 주세요.");
+    return;
+  }
+  if (!consent) {
+    setToast("매칭 진행 동의가 필요합니다.");
+    return;
+  }
+  state.loading.submitMatch = true;
+  render();
+  try {
+    const response = await fetch("/api/match-submissions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...state.matchForm,
+        synthesisResult: state.synthesis,
+        appearanceResult: state.results.appearance,
+        personalityResult: state.results.personality,
+        matchPack: state.matchPack,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "매칭 신청 저장에 실패했습니다.");
+    }
+    state.matchSubmission = result;
+    saveState();
+    render();
+    setToast("매칭 신청 카드가 저장되었습니다.");
+  } catch (error) {
+    setToast(error.message);
+  } finally {
+    state.loading.submitMatch = false;
     render();
   }
 }
@@ -585,6 +664,76 @@ function renderMatchPackCard() {
   </section>`;
 }
 
+function renderSelfVibeOptions(kind) {
+  const options = state.matchOptions[kind] || [];
+  const selectedValue = state.matchForm[kind === "appearance" ? "appearanceSelfTag" : "personalitySelfTag"];
+  return `<div class="vibe-options">
+    ${options
+      .map(
+        (option) => `<button
+          type="button"
+          class="vibe-option ${selectedValue === option.id ? "active" : ""}"
+          data-action="select-vibe"
+          data-kind="${kind}"
+          data-value="${escapeHtml(option.id)}"
+        >${escapeHtml(option.label)}</button>`
+      )
+      .join("")}
+  </div>`;
+}
+
+function renderMatchApplicationCard() {
+  if (!state.portrait || !state.synthesis) {
+    return "";
+  }
+  return `<section class="match-application-card">
+    <div class="match-pack-head">
+      <div>
+        <div class="result-narrative-title">Step 04</div>
+        <h3>매칭 신청 카드</h3>
+      </div>
+      ${state.matchSubmission ? `<div class="source-badge">saved</div>` : ""}
+    </div>
+    <div class="match-form-grid">
+      <label class="form-field">
+        <span>이름 또는 닉네임</span>
+        <input type="text" value="${escapeHtml(state.matchForm.displayName)}" data-role="match-display-name" placeholder="예: 다운 / 도원" />
+      </label>
+      <label class="form-field">
+        <span>전화번호</span>
+        <input type="text" value="${escapeHtml(state.matchForm.phone)}" data-role="match-phone" placeholder="01012345678" />
+      </label>
+    </div>
+    <div class="form-block">
+      <div class="summary-line-label">내 외모 분위기</div>
+      ${renderSelfVibeOptions("appearance")}
+    </div>
+    <div class="form-block">
+      <div class="summary-line-label">내 성격 분위기</div>
+      ${renderSelfVibeOptions("personality")}
+    </div>
+    <label class="consent-row">
+      <input type="checkbox" ${state.matchForm.consent ? "checked" : ""} data-role="match-consent" />
+      <span>매칭 여부에 전화번호를 활용하여 오픈카톡방 생성 등이 진행될 수 있음에 동의합니다.</span>
+    </label>
+    <div class="match-pack-actions">
+      <button type="button" class="primary-button" data-action="submit-match">
+        ${state.loading.submitMatch ? `<span class="loader"></span>` : "매칭 신청 저장"}
+      </button>
+    </div>
+    ${
+      state.matchSubmission
+        ? `<div class="match-pack-block">
+            <div class="summary-line-label">저장 완료</div>
+            <p>${escapeHtml(state.matchSubmission.displayName)} / ${escapeHtml(state.matchSubmission.phone)} / ${
+              state.matchSubmission.consent ? "동의 완료" : "미동의"
+            }</p>
+          </div>`
+        : ""
+    }
+  </section>`;
+}
+
 function renderSynthesisCard(result) {
   if (!result) {
     return "";
@@ -638,19 +787,20 @@ function renderSynthesisCard(result) {
             </div>
             <div class="image-copy">
               <div class="image-note">
-                <h4>Rendered Portrait</h4>
-                <p>${escapeHtml(state.portrait.note || "")}</p>
+                <h4>Portrait Note</h4>
+                <p>${escapeHtml(state.portrait.note || "선택한 인물들의 공통 분위기를 참고해 만든 원본 인물 포트레이트입니다.")}</p>
               </div>
               <div class="image-note">
-                <h4>Prompt Summary</h4>
-                <p>${escapeHtml(state.portrait.promptSummary || "")}</p>
+                <h4>외모 특성</h4>
+                <p>${escapeHtml((state.results.appearance?.keywords || []).join(", "))}</p>
               </div>
               <div class="image-note">
-                <h4>Model</h4>
-                <p>${escapeHtml(state.portrait.model || "")}</p>
+                <h4>성격 특성</h4>
+                <p>${escapeHtml((state.results.personality?.keywords || []).join(", "))}</p>
               </div>
             </div>
           </div>
+          ${renderMatchApplicationCard()}
           <div class="match-pack-stage">
             <div class="image-step-card compact">
               <div class="image-step-copy">
@@ -683,9 +833,11 @@ function render() {
     state.currentTab === "appearance" ? "외적 이상형이 떠오르는 인물을 검색하세요" : "성격 이미지가 끌리는 인물을 검색하세요";
   const stepTwoLabel = state.currentTab === "appearance" ? "외적 공통점 분석하기" : "성격 공통점 분석하기";
   const stepThreeLabel = "이미지 생성하기";
+  const stepFourLabel = "사람끼리 서로 매칭하기";
   const stageOneState = currentSelection.length > 0 ? "complete" : "current";
   const stageTwoState = currentDone ? "complete" : stepTwoReady ? "current" : "locked";
   const stageThreeState = state.portrait ? "complete" : state.synthesis ? "current" : "locked";
+  const stageFourState = state.matchSubmission ? "complete" : state.portrait ? "current" : "locked";
 
   app.innerHTML = `
     <div class="shell">
@@ -723,6 +875,13 @@ function render() {
                 <div class="rail-copy">
                   <strong>${stepThreeLabel}</strong>
                   <span>${state.portrait ? "생성 완료" : state.synthesis ? "지금 생성 가능" : "종합 결과 후 가능"}</span>
+                </div>
+              </div>
+              <div class="rail-step ${stageFourState}">
+                <div class="rail-number">4</div>
+                <div class="rail-copy">
+                  <strong>${stepFourLabel}</strong>
+                  <span>${state.matchSubmission ? "신청 완료" : state.portrait ? "지금 신청 가능" : "이미지 생성 후 가능"}</span>
                 </div>
               </div>
             </div>
@@ -903,6 +1062,10 @@ function bindEvents() {
     state.keepSearchFocus = false;
     generateMatchPack();
   });
+  app.querySelector("[data-action='submit-match']")?.addEventListener("click", () => {
+    state.keepSearchFocus = false;
+    submitMatchApplication();
+  });
   app.querySelector("[data-action='switch-next']")?.addEventListener("click", (event) => {
     state.keepSearchFocus = false;
     state.currentTab = event.currentTarget.dataset.tab;
@@ -915,6 +1078,33 @@ function bindEvents() {
   app.querySelectorAll("[data-action='copy']").forEach((button) => {
     button.addEventListener("click", () => copyText(button.dataset.copy));
   });
+
+  app.querySelectorAll("[data-action='select-vibe']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const kind = button.dataset.kind;
+      const value = button.dataset.value;
+      if (kind === "appearance") {
+        state.matchForm.appearanceSelfTag = value;
+      } else if (kind === "personality") {
+        state.matchForm.personalitySelfTag = value;
+      }
+      saveState();
+      render();
+    });
+  });
+
+  app.querySelector("[data-role='match-display-name']")?.addEventListener("input", (event) => {
+    state.matchForm.displayName = event.target.value;
+    saveState();
+  });
+  app.querySelector("[data-role='match-phone']")?.addEventListener("input", (event) => {
+    state.matchForm.phone = event.target.value;
+    saveState();
+  });
+  app.querySelector("[data-role='match-consent']")?.addEventListener("change", (event) => {
+    state.matchForm.consent = event.target.checked;
+    saveState();
+  });
 }
 
 async function init() {
@@ -925,6 +1115,7 @@ async function init() {
     const data = await response.json();
     state.catalog = data.people || [];
     state.examplePacks = data.examplePacks || {};
+    state.matchOptions = data.matchCandidateOptions || state.matchOptions;
     state.supportsCustomAnalysis = Boolean(data.supportsCustomAnalysis);
     state.supportsImageGeneration = Boolean(data.supportsImageGeneration);
     state.supportsNaverSearch = Boolean(data.supportsNaverSearch);

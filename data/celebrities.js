@@ -238,6 +238,27 @@ export const curatedPeople = [
     appearanceTags: ["youthful_bright", "presence", "clear_clean", "defined_features", "athletic_frame"],
     personalityTags: ["humor", "comfortable", "playful", "warmth", "candor"],
   },
+  {
+    name: "송강호",
+    role: "배우",
+    note: "묵직한 존재감과 밀도 높은 인상이 강한 타입",
+    appearanceTags: ["presence", "defined_features", "deep_eyes", "adult_classic", "long_lines"],
+    personalityTags: ["grounded", "professional", "calm", "candor", "intellect"],
+  },
+  {
+    name: "성동일",
+    role: "배우",
+    note: "생활감 있는 친근함과 단단한 무게감이 함께 느껴지는 타입",
+    appearanceTags: ["presence", "defined_features", "adult_classic", "deep_eyes", "athletic_frame"],
+    personalityTags: ["warmth", "grounded", "humor", "comfortable", "candor"],
+  },
+  {
+    name: "유재석",
+    role: "방송인",
+    note: "밝고 단정한 인상에 오래 가는 신뢰감이 있는 타입",
+    appearanceTags: ["clear_clean", "smart_refined", "youthful_bright", "soft_glow", "presence"],
+    personalityTags: ["humor", "comfortable", "warmth", "professional", "sense"],
+  },
 ];
 
 export const examplePacks = {

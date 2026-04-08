@@ -5,3 +5,4 @@
 - [completed] Railway 공개 배포 및 헬스체크 검증
 - [completed] Railway `OPENAI_API_KEY` 등록 후 커스텀 분석/이미지 생성 기능 활성화
 - [in_progress] 네이버 인물 검색 정밀도 개선, 단계형 분석 플로우 고도화, 매칭 운영용 카드 MVP 추가
+- [in_progress] 관리자 전용 매칭 운영 화면, 동의/전화번호 관리, 상호 매칭 엑셀 내보내기 추가

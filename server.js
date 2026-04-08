@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -12,11 +12,38 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
+const dataDir = path.join(__dirname, "data");
+const submissionStorePath = path.join(dataDir, "match-submissions.json");
 const port = Number(process.env.PORT || 3000);
 const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const imageModel = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5";
 const naverClientId = process.env.NAVER_SEARCH_CLIENT_ID || "";
 const naverClientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET || "";
+const adminUsername = "admin";
+const adminPassword = "01083376120";
+
+const matchCandidateOptions = {
+  appearance: [
+    { id: "defined_features", label: "선이 또렷한 얼굴" },
+    { id: "deep_eyes", label: "깊은 눈빛" },
+    { id: "long_lines", label: "길고 시원한 얼굴선" },
+    { id: "athletic_frame", label: "탄탄한 피지컬" },
+    { id: "adult_classic", label: "차분하고 어른스러운 무드" },
+    { id: "clear_clean", label: "맑고 깨끗한 인상" },
+    { id: "soft_glow", label: "부드러운 인상" },
+    { id: "chic_edge", label: "시크한 무드" },
+  ],
+  personality: [
+    { id: "humor", label: "유머감각" },
+    { id: "warmth", label: "다정함" },
+    { id: "grounded", label: "무게감" },
+    { id: "sense", label: "센스" },
+    { id: "professional", label: "자기 일 잘함" },
+    { id: "comfortable", label: "편안한 사회성" },
+    { id: "thoughtful", label: "사려 깊음" },
+    { id: "calm", label: "차분함" },
+  ],
+};
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -85,6 +112,42 @@ function titleCaseCategory(category) {
   return category === "appearance" ? "외적 공통점" : "성격 공통점";
 }
 
+function normalizePhone(value) {
+  return String(value || "").replace(/\D+/g, "").trim();
+}
+
+function decodeBasicAuthHeader(headerValue) {
+  if (!headerValue || !headerValue.startsWith("Basic ")) {
+    return null;
+  }
+  try {
+    const decoded = Buffer.from(headerValue.slice(6), "base64").toString("utf8");
+    const separatorIndex = decoded.indexOf(":");
+    if (separatorIndex < 0) {
+      return null;
+    }
+    return {
+      username: decoded.slice(0, separatorIndex),
+      password: decoded.slice(separatorIndex + 1),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isAdminAuthorized(request) {
+  const credentials = decodeBasicAuthHeader(request.headers.authorization || "");
+  return credentials?.username === adminUsername && credentials?.password === adminPassword;
+}
+
+function unauthorized(response) {
+  response.writeHead(401, {
+    "Content-Type": "application/json; charset=utf-8",
+    "WWW-Authenticate": 'Basic realm="Ideal Type Editorial Admin"',
+  });
+  response.end(JSON.stringify({ error: "관리자 인증이 필요합니다." }));
+}
+
 function json(response, statusCode, data) {
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
@@ -128,6 +191,29 @@ function sanitizeNames(names) {
     unique.push(name);
   }
   return unique;
+}
+
+async function ensureSubmissionStore() {
+  await mkdir(dataDir, { recursive: true });
+  try {
+    await access(submissionStorePath);
+  } catch {
+    await writeFile(submissionStorePath, JSON.stringify({ submissions: [] }, null, 2), "utf8");
+  }
+}
+
+async function readSubmissionStore() {
+  await ensureSubmissionStore();
+  const raw = await readFile(submissionStorePath, "utf8");
+  const parsed = JSON.parse(raw);
+  return {
+    submissions: Array.isArray(parsed?.submissions) ? parsed.submissions : [],
+  };
+}
+
+async function writeSubmissionStore(data) {
+  await ensureSubmissionStore();
+  await writeFile(submissionStorePath, JSON.stringify(data, null, 2), "utf8");
 }
 
 function getTagMeta(category) {
@@ -902,6 +988,195 @@ function buildLocalMatchPack({ synthesisResult, appearanceResult, personalityRes
   };
 }
 
+function summarizeSubmissionForAdmin(submission) {
+  return {
+    id: submission.id,
+    createdAt: submission.createdAt,
+    displayName: submission.displayName,
+    phone: submission.phone,
+    consent: Boolean(submission.consent),
+    appearanceSelfTag: submission.appearanceSelfTag || "",
+    personalitySelfTag: submission.personalitySelfTag || "",
+    combinedReply: submission.combinedReply || "",
+    synthesisTitle: submission.synthesisTitle || "",
+    appearanceKeywords: submission.appearanceKeywords || [],
+    personalityKeywords: submission.personalityKeywords || [],
+    adminStatus: submission.adminStatus || "pending",
+    adminNote: submission.adminNote || "",
+    manualAppearanceCandidateIds: submission.manualAppearanceCandidateIds || [],
+    manualPersonalityCandidateIds: submission.manualPersonalityCandidateIds || [],
+  };
+}
+
+function manualSelectionSet(submission) {
+  return new Set([
+    ...(Array.isArray(submission.manualAppearanceCandidateIds) ? submission.manualAppearanceCandidateIds : []),
+    ...(Array.isArray(submission.manualPersonalityCandidateIds) ? submission.manualPersonalityCandidateIds : []),
+  ]);
+}
+
+function computeMutualMatches(submissions) {
+  const results = [];
+  for (let index = 0; index < submissions.length; index += 1) {
+    for (let cursor = index + 1; cursor < submissions.length; cursor += 1) {
+      const left = submissions[index];
+      const right = submissions[cursor];
+      const leftChoices = manualSelectionSet(left);
+      const rightChoices = manualSelectionSet(right);
+      if (!leftChoices.has(right.id) || !rightChoices.has(left.id)) {
+        continue;
+      }
+      results.push({
+        leftId: left.id,
+        leftName: left.displayName,
+        leftPhone: left.phone,
+        rightId: right.id,
+        rightName: right.displayName,
+        rightPhone: right.phone,
+        leftConsent: Boolean(left.consent),
+        rightConsent: Boolean(right.consent),
+        matchedAt: new Date().toISOString(),
+      });
+    }
+  }
+  return results;
+}
+
+function escapeXml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+function buildExcelXml(mutualMatches) {
+  const rows = mutualMatches
+    .map(
+      (item) => `<Row>
+        <Cell><Data ss:Type="String">${escapeXml(item.leftName)}</Data></Cell>
+        <Cell><Data ss:Type="String">${escapeXml(item.leftPhone)}</Data></Cell>
+        <Cell><Data ss:Type="String">${escapeXml(item.rightName)}</Data></Cell>
+        <Cell><Data ss:Type="String">${escapeXml(item.rightPhone)}</Data></Cell>
+        <Cell><Data ss:Type="String">${escapeXml(item.leftConsent ? "동의" : "미동의")}</Data></Cell>
+        <Cell><Data ss:Type="String">${escapeXml(item.rightConsent ? "동의" : "미동의")}</Data></Cell>
+      </Row>`
+    )
+    .join("");
+
+  return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Worksheet ss:Name="Mutual Matches">
+    <Table>
+      <Row>
+        <Cell><Data ss:Type="String">이름 A</Data></Cell>
+        <Cell><Data ss:Type="String">전화번호 A</Data></Cell>
+        <Cell><Data ss:Type="String">이름 B</Data></Cell>
+        <Cell><Data ss:Type="String">전화번호 B</Data></Cell>
+        <Cell><Data ss:Type="String">동의 A</Data></Cell>
+        <Cell><Data ss:Type="String">동의 B</Data></Cell>
+      </Row>
+      ${rows}
+    </Table>
+  </Worksheet>
+</Workbook>`;
+}
+
+function sanitizeCandidateIds(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
+async function saveMatchSubmission(payload) {
+  const displayName = String(payload?.displayName || "").trim();
+  const phone = normalizePhone(payload?.phone);
+  const consent = Boolean(payload?.consent);
+  const appearanceSelfTag = String(payload?.appearanceSelfTag || "").trim();
+  const personalitySelfTag = String(payload?.personalitySelfTag || "").trim();
+  const synthesisResult = payload?.synthesisResult || {};
+  const appearanceResult = payload?.appearanceResult || {};
+  const personalityResult = payload?.personalityResult || {};
+  const matchPack = payload?.matchPack || {};
+
+  if (!displayName) {
+    throw new Error("이름 또는 닉네임을 입력해 주세요.");
+  }
+  if (phone.length < 10) {
+    throw new Error("전화번호를 정확히 입력해 주세요.");
+  }
+  if (!appearanceSelfTag || !personalitySelfTag) {
+    throw new Error("내 외모 분위기와 성격 분위기를 모두 선택해 주세요.");
+  }
+
+  const store = await readSubmissionStore();
+  const now = new Date().toISOString();
+  const existing = store.submissions.find((item) => normalizePhone(item.phone) === phone);
+  const baseRecord = {
+    id: existing?.id || `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    displayName,
+    phone,
+    consent,
+    appearanceSelfTag,
+    personalitySelfTag,
+    synthesisTitle: synthesisResult?.title || "",
+    combinedReply: synthesisResult?.combined_reply || synthesisResult?.short_reply || "",
+    appearanceKeywords: appearanceResult?.keywords || [],
+    personalityKeywords: personalityResult?.keywords || [],
+    appearanceTitle: appearanceResult?.title || "",
+    personalityTitle: personalityResult?.title || "",
+    matchPackTitle: matchPack?.title || "",
+    openchatPost: matchPack?.openchat_post || "",
+    adminStatus: existing?.adminStatus || "pending",
+    adminNote: existing?.adminNote || "",
+    manualAppearanceCandidateIds: existing?.manualAppearanceCandidateIds || [],
+    manualPersonalityCandidateIds: existing?.manualPersonalityCandidateIds || [],
+  };
+
+  if (existing) {
+    Object.assign(existing, baseRecord);
+  } else {
+    store.submissions.unshift(baseRecord);
+  }
+
+  await writeSubmissionStore(store);
+  return summarizeSubmissionForAdmin(baseRecord);
+}
+
+async function listAdminSubmissions() {
+  const store = await readSubmissionStore();
+  const submissions = [...store.submissions].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return {
+    submissions: submissions.map(summarizeSubmissionForAdmin),
+    mutualMatches: computeMutualMatches(submissions),
+  };
+}
+
+async function updateAdminSubmission(submissionId, payload) {
+  const store = await readSubmissionStore();
+  const target = store.submissions.find((item) => item.id === submissionId);
+  if (!target) {
+    throw new Error("관리 대상 신청서를 찾지 못했습니다.");
+  }
+
+  target.adminStatus = String(payload?.adminStatus || target.adminStatus || "pending").trim();
+  target.adminNote = String(payload?.adminNote || "").trim();
+  target.manualAppearanceCandidateIds = sanitizeCandidateIds(payload?.manualAppearanceCandidateIds);
+  target.manualPersonalityCandidateIds = sanitizeCandidateIds(payload?.manualPersonalityCandidateIds);
+  target.updatedAt = new Date().toISOString();
+
+  await writeSubmissionStore(store);
+  return summarizeSubmissionForAdmin(target);
+}
+
 async function buildOpenAIMatchPack({ synthesisResult, appearanceResult, personalityResult, portraitResult, selections }) {
   const instruction = [
     "You are building a curator-ready dating match pack for a Korean MVP.",
@@ -1100,7 +1375,7 @@ async function generateIdealPortrait(payload) {
     source: "openai-image",
     model: imageModel,
     promptSummary: synthesisResult?.headline || synthesisResult?.title || "ideal portrait",
-    note: "선택한 인물들의 공통 분위기를 참고해 만든 원본 인물 포트레이트입니다. 특정 유명인을 그대로 복제하지 않도록 제어했습니다.",
+    note: "선택한 인물들의 공통 분위기를 참고해 만든 원본 인물 포트레이트입니다.",
     imageDataUrl: `data:image/png;base64,${base64}`,
   };
 }
@@ -1172,6 +1447,7 @@ const server = createServer(async (request, response) => {
       return json(response, 200, {
         people: curatedPeople,
         examplePacks,
+        matchCandidateOptions,
         supportsCustomAnalysis: Boolean(process.env.OPENAI_API_KEY),
         supportsImageGeneration: Boolean(process.env.OPENAI_API_KEY),
         supportsNaverSearch: Boolean(naverClientId && naverClientSecret),
@@ -1209,6 +1485,51 @@ const server = createServer(async (request, response) => {
       const payload = await readJsonBody(request);
       const result = await buildMatchPack(payload);
       return json(response, 200, result);
+    }
+
+    if (method === "POST" && pathname === "/api/match-submissions") {
+      const payload = await readJsonBody(request);
+      const result = await saveMatchSubmission(payload);
+      return json(response, 200, result);
+    }
+
+    if (pathname === "/api/admin/submissions") {
+      if (!isAdminAuthorized(request)) {
+        return unauthorized(response);
+      }
+      if (method === "GET") {
+        const result = await listAdminSubmissions();
+        return json(response, 200, result);
+      }
+      return text(response, 405, "Method not allowed");
+    }
+
+    if (pathname.startsWith("/api/admin/submissions/")) {
+      if (!isAdminAuthorized(request)) {
+        return unauthorized(response);
+      }
+      if (method === "PATCH") {
+        const submissionId = pathname.split("/").pop();
+        const payload = await readJsonBody(request);
+        const result = await updateAdminSubmission(submissionId, payload);
+        return json(response, 200, result);
+      }
+      return text(response, 405, "Method not allowed");
+    }
+
+    if (method === "GET" && pathname === "/api/admin/export-matches.xls") {
+      if (!isAdminAuthorized(request)) {
+        return unauthorized(response);
+      }
+      const { submissions } = await readSubmissionStore();
+      const workbook = buildExcelXml(computeMutualMatches(submissions));
+      response.writeHead(200, {
+        "Content-Type": "application/vnd.ms-excel; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="mutual-matches.xls"',
+        "Cache-Control": "no-store",
+      });
+      response.end(workbook);
+      return;
     }
 
     if (method === "GET") {

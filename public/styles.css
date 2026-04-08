@@ -595,19 +595,6 @@ button {
   display: block;
 }
 
-.search-avatar::after {
-  content: attr(data-initials);
-  position: absolute;
-  left: 10px;
-  bottom: 8px;
-  font-family: "Plus Jakarta Sans", sans-serif;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: -0.06em;
-  color: rgba(255, 255, 255, 0.92);
-  text-shadow: 0 3px 12px rgba(20, 12, 10, 0.28);
-}
-
 .search-copy {
   min-width: 0;
 }
@@ -685,18 +672,6 @@ button {
   height: 160px;
   background: rgba(255, 255, 255, 0.18);
   border-radius: 999px;
-}
-
-.portrait::after {
-  content: attr(data-initials);
-  position: absolute;
-  left: 16px;
-  bottom: 12px;
-  font-family: "Plus Jakarta Sans", sans-serif;
-  font-size: 32px;
-  font-weight: 800;
-  letter-spacing: -0.06em;
-  color: rgba(255, 255, 255, 0.9);
 }
 
 .card-role {
@@ -1219,6 +1194,90 @@ button {
   gap: 10px;
 }
 
+.match-application-card {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 22px;
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 246, 242, 0.9)),
+    linear-gradient(135deg, rgba(239, 161, 145, 0.1), rgba(164, 73, 64, 0.06));
+  border: 1px solid rgba(164, 73, 64, 0.12);
+}
+
+.match-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.form-field {
+  display: grid;
+  gap: 8px;
+}
+
+.form-field span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.form-field input {
+  width: 100%;
+  min-height: 52px;
+  border-radius: 18px;
+  border: 1px solid rgba(96, 67, 57, 0.12);
+  background: rgba(255, 255, 255, 0.85);
+  padding: 0 16px;
+  outline: none;
+}
+
+.form-block {
+  display: grid;
+  gap: 10px;
+}
+
+.vibe-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.vibe-option {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 67, 57, 0.1);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink-soft);
+  font-family: "Plus Jakarta Sans", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.vibe-option.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+  color: #fff7f5;
+}
+
+.consent-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.consent-row input {
+  margin-top: 3px;
+}
+
 .image-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1344,7 +1403,8 @@ button {
   .breakdowns,
   .result-layout,
   .image-stage,
-  .match-pack-grid {
+  .match-pack-grid,
+  .match-form-grid {
     grid-template-columns: 1fr;
   }
 
