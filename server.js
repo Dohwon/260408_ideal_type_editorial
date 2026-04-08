@@ -387,25 +387,53 @@ function buildUniqueSelectionName(name, description, seenKeys) {
 
 function buildLocalSearchResults(query, category) {
   const keyword = query.trim().toLowerCase();
+  const keywordKey = normalizeName(query);
   if (!keyword) {
     return [];
   }
 
   return curatedPeople
-    .filter((person) => {
-      const pool = [
-        person.name,
-        ...(person.aliases || []),
-        person.role,
-        person.note,
-        ...(category === "appearance" ? person.appearanceTags : person.personalityTags),
-      ]
-        .join(" ")
-        .toLowerCase();
-      return pool.includes(keyword);
+    .map((person) => {
+      const nameKey = normalizeName(person.name);
+      const aliasKeys = (person.aliases || []).map((alias) => normalizeName(alias));
+      let score = 0;
+
+      if (nameKey === keywordKey) {
+        score = 120;
+      } else if (aliasKeys.includes(keywordKey)) {
+        score = 110;
+      } else if (nameKey.startsWith(keywordKey)) {
+        score = 95;
+      } else if (aliasKeys.some((alias) => alias.startsWith(keywordKey))) {
+        score = 88;
+      } else if (nameKey.includes(keywordKey)) {
+        score = 78;
+      } else if (aliasKeys.some((alias) => alias.includes(keywordKey))) {
+        score = 72;
+      } else {
+        const pool = [
+          person.name,
+          ...(person.aliases || []),
+          person.role,
+          person.note,
+          ...(category === "appearance" ? person.appearanceTags : person.personalityTags),
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (pool.includes(keyword)) {
+          score = 40;
+        }
+      }
+
+      return {
+        person,
+        score,
+      };
     })
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.person.name.localeCompare(right.person.name, "ko"))
     .slice(0, 12)
-    .map((person) => ({
+    .map(({ person }) => ({
       id: `local:${person.name}`,
       name: person.name,
       selectionName: person.name,
