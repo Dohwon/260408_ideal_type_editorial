@@ -6,7 +6,6 @@
 
 - 사용자 서비스: `https://260408-ideal-type-editorial-production.up.railway.app`
 - 관리자 페이지: `https://260408-ideal-type-editorial-production.up.railway.app/admin.html`
-- 관리자 로그인: `admin / 01083376120`
 
 ## 핵심 기능
 
@@ -41,6 +40,9 @@ npm start
 - `NAVER_SEARCH_CLIENT_SECRET`
   - 둘 다 있으면 검색창에서 네이버 이미지 검색 썸네일 프리뷰 사용
   - 없으면 로컬 후보 검색만 동작
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+  - 관리자 페이지 Basic Auth 자격증명
 
 ## OpenAI 구현 메모
 

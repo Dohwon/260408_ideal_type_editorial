@@ -19,8 +19,8 @@ const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const imageModel = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5";
 const naverClientId = process.env.NAVER_SEARCH_CLIENT_ID || "";
 const naverClientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET || "";
-const adminUsername = "admin";
-const adminPassword = "01083376120";
+const adminUsername = (process.env.ADMIN_USERNAME || "admin").trim();
+const adminPassword = (process.env.ADMIN_PASSWORD || "").trim();
 
 const matchCandidateOptions = {
   genderIdentity: [
@@ -198,6 +198,9 @@ function decodeBasicAuthHeader(headerValue) {
 }
 
 function isAdminAuthorized(request) {
+  if (!adminUsername || !adminPassword) {
+    return false;
+  }
   const credentials = decodeBasicAuthHeader(request.headers.authorization || "");
   return credentials?.username === adminUsername && credentials?.password === adminPassword;
 }
