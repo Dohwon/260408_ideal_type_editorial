@@ -23,16 +23,47 @@ const adminUsername = "admin";
 const adminPassword = "01083376120";
 
 const matchCandidateOptions = {
-  appearance: [
-    { id: "defined_features", label: "선이 또렷한 얼굴" },
-    { id: "deep_eyes", label: "깊은 눈빛" },
-    { id: "long_lines", label: "길고 시원한 얼굴선" },
-    { id: "athletic_frame", label: "탄탄한 피지컬" },
-    { id: "adult_classic", label: "차분하고 어른스러운 무드" },
-    { id: "clear_clean", label: "맑고 깨끗한 인상" },
-    { id: "soft_glow", label: "부드러운 인상" },
-    { id: "chic_edge", label: "시크한 무드" },
+  genderIdentity: [
+    { id: "woman", label: "여자" },
+    { id: "man", label: "남자" },
+    { id: "other", label: "논바이너리 · 기타" },
   ],
+  desiredGender: [
+    { id: "man", label: "남자를 만나고 싶어요" },
+    { id: "woman", label: "여자를 만나고 싶어요" },
+    { id: "any", label: "성별 상관없어요" },
+  ],
+  appearanceByGender: {
+    woman: [
+      { id: "clear_pure", label: "맑고 청순한 인상" },
+      { id: "urban_chic", label: "도회적이고 세련된 무드" },
+      { id: "lovely_soft", label: "러블리하고 부드러운 분위기" },
+      { id: "sharp_chic", label: "시크하고 또렷한 인상" },
+      { id: "classic_refined", label: "단정하고 클래식한 분위기" },
+      { id: "healthy_bright", label: "건강하고 밝은 무드" },
+      { id: "smart_clean", label: "지적이고 정돈된 인상" },
+    ],
+    man: [
+      { id: "defined_features", label: "선이 또렷한 얼굴" },
+      { id: "deep_eyes", label: "깊은 눈빛" },
+      { id: "athletic_frame", label: "탄탄한 피지컬" },
+      { id: "adult_classic", label: "차분하고 어른스러운 무드" },
+      { id: "soft_comfortable", label: "부드럽고 편안한 인상" },
+      { id: "smart_refined", label: "스마트하고 단정한 인상" },
+      { id: "youthful_bright", label: "소년미 있는 밝은 무드" },
+      { id: "masculine_chic", label: "시크한 남성적 무드" },
+    ],
+    other: [
+      { id: "genderless_chic", label: "중성적이고 세련된 무드" },
+      { id: "clear_clean", label: "맑고 깨끗한 인상" },
+      { id: "defined_features", label: "선이 또렷한 얼굴" },
+      { id: "soft_glow", label: "부드럽고 온화한 분위기" },
+      { id: "chic_edge", label: "시크한 무드" },
+      { id: "artistic", label: "예술적이고 개성 있는 인상" },
+      { id: "smart_refined", label: "단정하고 지적인 무드" },
+      { id: "healthy_bright", label: "건강하고 밝은 에너지" },
+    ],
+  },
   personality: [
     { id: "humor", label: "유머감각" },
     { id: "warmth", label: "다정함" },
@@ -110,6 +141,11 @@ function isSearchableQuery(value) {
 
 function titleCaseCategory(category) {
   return category === "appearance" ? "외적 공통점" : "성격 공통점";
+}
+
+function labelForOption(options, value) {
+  const match = Array.isArray(options) ? options.find((item) => item.id === value) : null;
+  return match?.label || String(value || "");
 }
 
 function normalizePhone(value) {
@@ -995,6 +1031,10 @@ function summarizeSubmissionForAdmin(submission) {
     displayName: submission.displayName,
     phone: submission.phone,
     consent: Boolean(submission.consent),
+    genderIdentity: submission.genderIdentity || "",
+    desiredGender: submission.desiredGender || "",
+    genderIdentityLabel: labelForOption(matchCandidateOptions.genderIdentity, submission.genderIdentity),
+    desiredGenderLabel: labelForOption(matchCandidateOptions.desiredGender, submission.desiredGender),
     appearanceSelfTag: submission.appearanceSelfTag || "",
     personalitySelfTag: submission.personalitySelfTag || "",
     combinedReply: submission.combinedReply || "",
@@ -1098,18 +1138,25 @@ async function saveMatchSubmission(payload) {
   const displayName = String(payload?.displayName || "").trim();
   const phone = normalizePhone(payload?.phone);
   const consent = Boolean(payload?.consent);
+  const genderIdentity = String(payload?.genderIdentity || "").trim();
+  const desiredGender = String(payload?.desiredGender || "").trim();
   const appearanceSelfTag = String(payload?.appearanceSelfTag || "").trim();
   const personalitySelfTag = String(payload?.personalitySelfTag || "").trim();
   const synthesisResult = payload?.synthesisResult || {};
   const appearanceResult = payload?.appearanceResult || {};
   const personalityResult = payload?.personalityResult || {};
-  const matchPack = payload?.matchPack || {};
 
   if (!displayName) {
     throw new Error("이름 또는 닉네임을 입력해 주세요.");
   }
   if (phone.length < 10) {
     throw new Error("전화번호를 정확히 입력해 주세요.");
+  }
+  if (!["woman", "man", "other"].includes(genderIdentity)) {
+    throw new Error("내 성별을 선택해 주세요.");
+  }
+  if (!["woman", "man", "any"].includes(desiredGender)) {
+    throw new Error("희망 상대 성별을 선택해 주세요.");
   }
   if (!appearanceSelfTag || !personalitySelfTag) {
     throw new Error("내 외모 분위기와 성격 분위기를 모두 선택해 주세요.");
@@ -1125,6 +1172,8 @@ async function saveMatchSubmission(payload) {
     displayName,
     phone,
     consent,
+    genderIdentity,
+    desiredGender,
     appearanceSelfTag,
     personalitySelfTag,
     synthesisTitle: synthesisResult?.title || "",
@@ -1133,8 +1182,6 @@ async function saveMatchSubmission(payload) {
     personalityKeywords: personalityResult?.keywords || [],
     appearanceTitle: appearanceResult?.title || "",
     personalityTitle: personalityResult?.title || "",
-    matchPackTitle: matchPack?.title || "",
-    openchatPost: matchPack?.openchat_post || "",
     adminStatus: existing?.adminStatus || "pending",
     adminNote: existing?.adminNote || "",
     manualAppearanceCandidateIds: existing?.manualAppearanceCandidateIds || [],

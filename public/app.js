@@ -40,6 +40,8 @@ const state = {
     displayName: "",
     phone: "",
     consent: false,
+    genderIdentity: "woman",
+    desiredGender: "man",
     appearanceSelfTag: "",
     personalitySelfTag: "",
   },
@@ -62,6 +64,14 @@ const app = document.querySelector("#app");
 
 function getCurrentSelection() {
   return state.selections[state.currentTab];
+}
+
+function renderKeepingScroll() {
+  const scrollY = window.scrollY;
+  render();
+  requestAnimationFrame(() => {
+    window.scrollTo({ top: scrollY });
+  });
 }
 
 function saveState() {
@@ -181,6 +191,11 @@ function resetCurrentTab() {
   state.portrait = null;
   saveState();
   render();
+}
+
+function getAppearanceOptionsForMatchForm() {
+  const genderKey = state.matchForm.genderIdentity || "woman";
+  return state.matchOptions.appearanceByGender?.[genderKey] || [];
 }
 
 function setSelectionMeta(tab, name, meta) {
@@ -477,7 +492,6 @@ async function submitMatchApplication() {
         synthesisResult: state.synthesis,
         appearanceResult: state.results.appearance,
         personalityResult: state.results.personality,
-        matchPack: state.matchPack,
       }),
     });
     const result = await response.json();
@@ -545,9 +559,7 @@ function renderPeopleCards() {
           : [];
         return `<div class="search-row-card ${active ? "active" : ""}">
           <button class="search-row-main" type="button" data-action="toggle" data-name="${escapeHtml(choiceName)}">
-            <div class="search-avatar" style="${getPortraitStyle(choiceName)}" data-initials="${escapeHtml(
-              initialsFromName(choiceName)
-            )}">
+            <div class="search-avatar" style="${getPortraitStyle(choiceName)}">
               ${person.imageUrl ? `<img src="${escapeHtml(person.imageUrl)}" alt="${escapeHtml(choiceName)}" referrerpolicy="no-referrer" />` : ""}
             </div>
             <div class="search-copy">
@@ -665,7 +677,7 @@ function renderMatchPackCard() {
 }
 
 function renderSelfVibeOptions(kind) {
-  const options = state.matchOptions[kind] || [];
+  const options = kind === "appearance" ? getAppearanceOptionsForMatchForm() : state.matchOptions.personality || [];
   const selectedValue = state.matchForm[kind === "appearance" ? "appearanceSelfTag" : "personalitySelfTag"];
   return `<div class="vibe-options">
     ${options
@@ -702,6 +714,28 @@ function renderMatchApplicationCard() {
       <label class="form-field">
         <span>전화번호</span>
         <input type="text" value="${escapeHtml(state.matchForm.phone)}" data-role="match-phone" placeholder="01012345678" />
+      </label>
+      <label class="form-field">
+        <span>내 성별</span>
+        <select data-role="match-gender-identity">
+          ${(state.matchOptions.genderIdentity || [])
+            .map(
+              (option) =>
+                `<option value="${escapeHtml(option.id)}" ${state.matchForm.genderIdentity === option.id ? "selected" : ""}>${escapeHtml(option.label)}</option>`
+            )
+            .join("")}
+        </select>
+      </label>
+      <label class="form-field">
+        <span>희망 상대 성별</span>
+        <select data-role="match-desired-gender">
+          ${(state.matchOptions.desiredGender || [])
+            .map(
+              (option) =>
+                `<option value="${escapeHtml(option.id)}" ${state.matchForm.desiredGender === option.id ? "selected" : ""}>${escapeHtml(option.label)}</option>`
+            )
+            .join("")}
+        </select>
       </label>
     </div>
     <div class="form-block">
@@ -800,22 +834,7 @@ function renderSynthesisCard(result) {
               </div>
             </div>
           </div>
-          ${renderMatchApplicationCard()}
-          <div class="match-pack-stage">
-            <div class="image-step-card compact">
-              <div class="image-step-copy">
-                <div class="result-narrative-title">Monetization MVP</div>
-                <h3>매칭 운영용 카드 만들기</h3>
-                <p>생성된 얼굴 이미지와 성격 결을 바탕으로 수동 소개팅, 오픈카톡 모집, 큐레이터 메모에 바로 쓸 수 있는 운영용 문구를 만듭니다.</p>
-              </div>
-              <div class="image-actions">
-                <button type="button" class="primary-button" data-action="generate-match-pack">
-                  ${state.loading.matchPack ? `<span class="loader"></span>` : "매칭 카드 만들기"}
-                </button>
-              </div>
-            </div>
-            ${renderMatchPackCard()}
-          </div>`
+          ${renderMatchApplicationCard()}`
         : ""
     }
   </section>`;
@@ -978,6 +997,7 @@ function render() {
         </section>
       </main>
 
+      <a class="admin-entry" href="/admin.html" aria-label="admin">ops</a>
       ${state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : ""}
     </div>
   `;
@@ -1058,10 +1078,6 @@ function bindEvents() {
     state.keepSearchFocus = false;
     generatePortrait();
   });
-  app.querySelector("[data-action='generate-match-pack']")?.addEventListener("click", () => {
-    state.keepSearchFocus = false;
-    generateMatchPack();
-  });
   app.querySelector("[data-action='submit-match']")?.addEventListener("click", () => {
     state.keepSearchFocus = false;
     submitMatchApplication();
@@ -1089,7 +1105,7 @@ function bindEvents() {
         state.matchForm.personalitySelfTag = value;
       }
       saveState();
-      render();
+      renderKeepingScroll();
     });
   });
 
@@ -1104,6 +1120,17 @@ function bindEvents() {
   app.querySelector("[data-role='match-consent']")?.addEventListener("change", (event) => {
     state.matchForm.consent = event.target.checked;
     saveState();
+  });
+  app.querySelector("[data-role='match-gender-identity']")?.addEventListener("change", (event) => {
+    state.matchForm.genderIdentity = event.target.value;
+    state.matchForm.appearanceSelfTag = "";
+    saveState();
+    renderKeepingScroll();
+  });
+  app.querySelector("[data-role='match-desired-gender']")?.addEventListener("change", (event) => {
+    state.matchForm.desiredGender = event.target.value;
+    saveState();
+    renderKeepingScroll();
   });
 }
 
