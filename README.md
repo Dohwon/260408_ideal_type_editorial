@@ -2,6 +2,12 @@
 
 3명에서 10명의 이름만 고르면 외적 공통점과 성격 공통점을 에디토리얼 톤으로 정리하고, 최종 이상형 이미지와 수동 소개팅 운영용 매칭 카드까지 만드는 웹 앱이다.
 
+## 운영 주소
+
+- 사용자 서비스: `https://260408-ideal-type-editorial-production.up.railway.app`
+- 관리자 페이지: `https://260408-ideal-type-editorial-production.up.railway.app/admin.html`
+- 관리자 로그인: `admin / 01083376120`
+
 ## 핵심 기능
 
 - 외적 이상형 / 성격 이상형을 별도 탭으로 분리
